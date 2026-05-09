@@ -68,11 +68,10 @@ async def schema(filter: str | None = None) -> dict:
 async def message_list(
     filter: str | None = None,
     allow_raw: bool = False,
-    include_tx: bool = False,
 ) -> dict:
     """Observed-traffic inventory. Returns compact message entries, not decoded signal values."""
     engine = await sessions.engine()
-    request = MessageListRequest(filter=filter, allow_raw=allow_raw, include_tx=include_tx)
+    request = MessageListRequest(filter=filter, allow_raw=allow_raw)
     return {"messages": [message.model_dump() for message in engine.message_list(request)]}
 
 
@@ -80,11 +79,10 @@ async def message_list(
 async def message_read(
     select: str,
     count: int | None = None,
-    include_tx: bool = False,
 ) -> dict:
     """Detailed inspection for one selector."""
     engine = await sessions.engine()
-    request = MessageReadRequest(select=select, count=count, include_tx=include_tx)
+    request = MessageReadRequest(select=select, count=count)
     return engine.message_read(request).model_dump()
 
 

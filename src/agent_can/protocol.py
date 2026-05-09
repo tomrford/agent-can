@@ -38,13 +38,11 @@ class SchemaRequest(BaseModel):
 class MessageListRequest(BaseModel):
     filter: str | None = None
     allow_raw: bool = False
-    include_tx: bool = False
 
 
 class MessageReadRequest(BaseModel):
     select: str
     count: int | None = None
-    include_tx: bool = False
 
 
 class MessageSendRequest(BaseModel):

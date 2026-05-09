@@ -3,12 +3,12 @@ revision = 3
 requires-python = ">=3.12"
 
 [options]
-exclude-newer = "2026-05-02T10:57:47.116126Z"
+exclude-newer = "2026-05-02T11:30:16.152203Z"
 exclude-newer-span = "P7D"
 
 [[package]]
 name = "agent-can"
-version = "0.0.0"
+version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "cantools" },

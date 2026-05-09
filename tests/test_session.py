@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 
+import can
+import pytest
+
+from agent_can.dbc import DbcRegistry
 from agent_can.protocol import (
     ConnectRequest,
     DbcSpec,
@@ -11,79 +14,108 @@ from agent_can.protocol import (
     MessageSendRequest,
     SchemaRequest,
 )
-from agent_can.session import SessionManager
+from agent_can.session import SessionEngine
+
+
+class FakeBackend:
+    def __init__(self) -> None:
+        self.sent: list[can.Message] = []
+
+    def recv_all(self) -> list[can.Message]:
+        return []
+
+    def send(self, message: can.Message) -> None:
+        self.sent.append(message)
+
+    def close(self) -> None:
+        return
 
 
 def demo_dbc_path() -> str:
     return str((Path(__file__).parents[1] / "examples" / "demo.dbc").resolve())
 
 
-def test_demo_session_schema_and_raw_send() -> None:
-    async def run() -> None:
-        manager = SessionManager()
-        result = await manager.connect(
-            ConnectRequest(
-                interface="demo",
-                channel="demo",
-                bitrate=500_000,
-                fd=False,
-                dbcs=[DbcSpec(alias="demo", path=demo_dbc_path())],
-            )
+def make_engine() -> tuple[SessionEngine, FakeBackend]:
+    request = ConnectRequest(
+        interface="virtual",
+        channel="agent-can",
+        bitrate=500_000,
+        fd=False,
+        dbcs=[DbcSpec(alias="demo", path=demo_dbc_path())],
+    )
+    backend = FakeBackend()
+    return SessionEngine(request, DbcRegistry(request.dbcs), backend), backend
+
+
+def powertrain_payload() -> dict[str, float]:
+    return {
+        "vehicle_speed": 12.3,
+        "engine_rpm": 1500,
+        "throttle": 20,
+        "coolant_temp": 90,
+    }
+
+
+def record_powertrain_rx(engine: SessionEngine) -> None:
+    sent = engine.message_send(
+        MessageSendRequest(target="demo.PowertrainStatus", data=powertrain_payload())
+    )
+    engine.record_event(
+        can.Message(
+            arbitration_id=sent.arb_id,
+            is_extended_id=sent.extended,
+            is_fd=sent.fd,
+            data=engine.backend.sent[-1].data,
         )
-        assert result.created is True
-
-        engine = await manager.engine()
-        messages = engine.schema(SchemaRequest())
-        assert [message.qualified_name for message in messages] == [
-            "demo.BodyStatus",
-            "demo.Heartbeat",
-            "demo.PowertrainStatus",
-        ]
-
-        sent = engine.message_send(MessageSendRequest(target="0x123", data="DE AD BE EF"))
-        assert sent.arb_id == 0x123
-        assert sent.len == 4
-
-        listed = engine.message_list(MessageListRequest(allow_raw=True, include_tx=True))
-        assert any(message.label == "0x123" for message in listed)
-
-        read = engine.message_read(MessageReadRequest(select="0x123", include_tx=True))
-        assert read.observations[0].payload_hex == "DEADBEEF"
-        await manager.disconnect()
-
-    asyncio.run(run())
+    )
 
 
-def test_demo_session_semantic_send_and_decode() -> None:
-    async def run() -> None:
-        manager = SessionManager()
-        await manager.connect(
-            ConnectRequest(
-                interface="demo",
-                channel="demo",
-                bitrate=500_000,
-                fd=False,
-                dbcs=[DbcSpec(alias="demo", path=demo_dbc_path())],
-            )
-        )
-        engine = await manager.engine()
-        engine.message_send(
-            MessageSendRequest(
-                target="demo.PowertrainStatus",
-                data={
-                    "vehicle_speed": 12.3,
-                    "engine_rpm": 1500,
-                    "throttle": 20,
-                    "coolant_temp": 90,
-                },
-            )
-        )
-        read = engine.message_read(
-            MessageReadRequest(select="demo.PowertrainStatus", include_tx=True)
-        )
-        values = {signal.name: signal.value for signal in read.observations[0].signals}
-        assert values["engine_rpm"] == 1500
-        assert values["coolant_temp"] == 90
-        await manager.disconnect()
+def test_schema_and_raw_send() -> None:
+    engine, backend = make_engine()
 
-    asyncio.run(run())
+    messages = engine.schema(SchemaRequest())
+    assert [message.qualified_name for message in messages] == [
+        "demo.BodyStatus",
+        "demo.Heartbeat",
+        "demo.PowertrainStatus",
+    ]
+
+    sent = engine.message_send(MessageSendRequest(target="0x123", data="DE AD BE EF"))
+    assert sent.arb_id == 0x123
+    assert sent.len == 4
+    assert backend.sent[-1].data == bytearray.fromhex("DE AD BE EF")
+
+
+def test_semantic_read_decodes_rx_only() -> None:
+    engine, _backend = make_engine()
+    record_powertrain_rx(engine)
+
+    read = engine.message_read(MessageReadRequest(select="demo.PowertrainStatus"))
+    values = {signal.name: signal.value for signal in read.observations[0].signals}
+    assert values["engine_rpm"] == 1500
+    assert values["coolant_temp"] == 90
+
+
+def test_semantic_read_requires_exact_target_name() -> None:
+    engine, _backend = make_engine()
+    record_powertrain_rx(engine)
+
+    with pytest.raises(ValueError, match="selector matched no DBC messages"):
+        engine.message_read(MessageReadRequest(select="PowerTrain"))
+
+
+def test_message_list_filter_matches_partial_names_case_insensitively() -> None:
+    engine, _backend = make_engine()
+    record_powertrain_rx(engine)
+
+    labels_by_filter = {}
+    for filter_value in ("PowerTrain", "powertrain", "demo", "0x120"):
+        listed = engine.message_list(MessageListRequest(filter=filter_value))
+        labels_by_filter[filter_value] = [message.label for message in listed]
+
+    assert labels_by_filter == {
+        "PowerTrain": ["demo.PowertrainStatus"],
+        "powertrain": ["demo.PowertrainStatus"],
+        "demo": ["demo.PowertrainStatus"],
+        "0x120": ["demo.PowertrainStatus"],
+    }

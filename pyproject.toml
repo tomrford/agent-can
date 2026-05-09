@@ -1,9 +1,22 @@
 [project]
 name = "agent-can"
-version = "0.0.0"
-description = "Python spike for an agent-first CAN MCP server"
+version = "0.1.0"
+description = "Agent-first CAN control MCP server"
 readme = "README.md"
 requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE.md"]
+authors = [{ name = "Tom Ford" }]
+keywords = ["can", "mcp", "dbc", "python-can", "cantools"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: System :: Hardware",
+]
 dependencies = [
     "cantools>=39.4.0",
     "mcp>=1.14.0",
@@ -13,6 +26,11 @@ dependencies = [
 
 [project.scripts]
 agent-can = "agent_can.server:main"
+
+[project.urls]
+Homepage = "https://github.com/tomrford/agent-can"
+Repository = "https://github.com/tomrford/agent-can"
+Issues = "https://github.com/tomrford/agent-can/issues"
 
 [build-system]
 requires = ["uv_build>=0.9.0,<0.10.0"]

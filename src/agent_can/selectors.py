@@ -8,6 +8,7 @@ from fnmatch import fnmatchcase
 class Selector:
     raw_arb_id: int | None = None
     semantic_pattern: str | None = None
+    normalized_pattern: str | None = None
 
     @classmethod
     def parse(cls, raw: str) -> "Selector":
@@ -19,10 +20,21 @@ class Selector:
                 return cls(raw_arb_id=int(value[2:], 16))
             except ValueError as err:
                 raise ValueError(f"invalid raw arbitration selector '{raw}'") from err
-        return cls(semantic_pattern=value)
+        return cls(semantic_pattern=value, normalized_pattern=value.casefold())
 
-    def matches_qualified_name(self, value: str) -> bool:
-        return self.semantic_pattern is not None and fnmatchcase(value, self.semantic_pattern)
+    def matches_name_filter(self, value: str) -> bool:
+        if self.normalized_pattern is None:
+            return False
+        candidate = value.casefold()
+        return (
+            fnmatchcase(candidate, self.normalized_pattern) or self.normalized_pattern in candidate
+        )
+
+    def matches_any_name_filter(self, *values: str) -> bool:
+        return any(self.matches_name_filter(value) for value in values)
+
+    def matches_exact_name(self, value: str) -> bool:
+        return self.semantic_pattern == value
 
     def matches_arb_id(self, value: int) -> bool:
         return self.raw_arb_id == value

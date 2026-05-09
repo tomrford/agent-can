@@ -45,10 +45,17 @@ class DbcRegistry:
     def __init__(self, specs: list[DbcSpec]) -> None:
         self.specs = specs
         self._messages: list[MessageDef] = []
+        self._messages_by_qualified_name: dict[str, MessageDef] = {}
+        self._by_frame: dict[tuple[int, bool], list[MessageDef]] = {}
         for spec in specs:
             db = cantools.database.load_file(spec.path)
             for message in db.messages:
-                self._messages.append(MessageDef(spec.alias, db, message))
+                message_def = MessageDef(spec.alias, db, message)
+                self._messages.append(message_def)
+                self._messages_by_qualified_name[message_def.qualified_name] = message_def
+                self._by_frame.setdefault((message_def.arb_id, message_def.extended), []).append(
+                    message_def
+                )
 
     @property
     def is_empty(self) -> bool:
@@ -58,29 +65,28 @@ class DbcRegistry:
         messages = [
             self._to_schema_message(message)
             for message in self._messages
-            if selector is None
-            or selector.matches_qualified_name(message.qualified_name)
-            or selector.matches_arb_id(message.arb_id)
+            if selector is None or self.matches_message_filter(selector, message)
         ]
         return sorted(messages, key=lambda item: item.qualified_name)
 
+    def matches_message_filter(self, selector: Selector, message: MessageDef) -> bool:
+        return selector.matches_arb_id(message.arb_id) or selector.matches_any_name_filter(
+            message.qualified_name, message.alias, message.message.name
+        )
+
     def matches_for_frame(self, arb_id: int, extended: bool) -> list[MessageDef]:
-        return [
-            message
-            for message in self._messages
-            if message.arb_id == arb_id and message.extended == extended
-        ]
+        return self._by_frame.get((arb_id, extended), [])
 
     def resolve_selector(self, selector: Selector) -> MessageDef:
         if selector.raw_arb_id is not None:
             matches = [
-                message for message in self._messages if message.arb_id == selector.raw_arb_id
+                message for message in self._messages if selector.matches_arb_id(message.arb_id)
             ]
         else:
             matches = [
                 message
                 for message in self._messages
-                if selector.matches_qualified_name(message.qualified_name)
+                if selector.matches_exact_name(message.qualified_name)
             ]
         if not matches:
             raise ValueError("selector matched no DBC messages")
@@ -113,10 +119,10 @@ class DbcRegistry:
         return out
 
     def _by_qualified_name(self, qualified_name: str) -> MessageDef:
-        for message in self._messages:
-            if message.qualified_name == qualified_name:
-                return message
-        raise ValueError(f"unknown DBC message '{qualified_name}'")
+        try:
+            return self._messages_by_qualified_name[qualified_name]
+        except KeyError as err:
+            raise ValueError(f"unknown DBC message '{qualified_name}'") from err
 
     def _to_schema_message(self, message: MessageDef) -> SchemaMessage:
         return SchemaMessage(

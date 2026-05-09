@@ -49,14 +49,9 @@ class ObservedEvent:
 
 @dataclass
 class LatestObservation:
-    latest_any: ObservedEvent
-    latest_rx: ObservedEvent | None = None
-    latest_tx: ObservedEvent | None = None
+    latest_rx: ObservedEvent
     observed_count: int = 1
     cycle_time_ms: float | None = None
-
-    def visible(self, include_tx: bool) -> ObservedEvent | None:
-        return self.latest_any if include_tx else self.latest_rx
 
 
 @dataclass
@@ -110,7 +105,7 @@ class SessionEngine:
     def tick(self) -> None:
         try:
             for message in self.backend.recv_all():
-                self.record_event(EventDirection.RX, message)
+                self.record_event(message)
         except Exception as err:
             self.backend_error = str(err)
         self.tick_schedules()
@@ -130,9 +125,7 @@ class SessionEngine:
         selector = Selector.parse(request.filter) if request.filter else None
         out: list[MessageListEntry] = []
         for latest in self.latest.values():
-            event = latest.visible(request.include_tx)
-            if event is None:
-                continue
+            event = latest.latest_rx
             matches = self.dbcs.matches_for_frame(
                 event.message.arbitration_id, event.message.is_extended_id
             )
@@ -150,16 +143,13 @@ class SessionEngine:
                             len=event.message.dlc,
                             observed_count=latest.observed_count,
                             cycle_time_ms=latest.cycle_time_ms,
-                            has_rx=latest.latest_rx is not None,
-                            has_tx=latest.latest_tx is not None,
+                            has_rx=True,
+                            has_tx=False,
                         )
                     )
                 continue
             for message in matches:
-                if selector and not (
-                    selector.matches_arb_id(message.arb_id)
-                    or selector.matches_qualified_name(message.qualified_name)
-                ):
+                if selector and not self.dbcs.matches_message_filter(selector, message):
                     continue
                 out.append(
                     MessageListEntry(
@@ -171,8 +161,8 @@ class SessionEngine:
                         len=event.message.dlc,
                         observed_count=latest.observed_count,
                         cycle_time_ms=latest.cycle_time_ms,
-                        has_rx=latest.latest_rx is not None,
-                        has_tx=latest.latest_tx is not None,
+                        has_rx=True,
+                        has_tx=False,
                     )
                 )
         return sorted(out, key=lambda item: item.label)
@@ -185,9 +175,7 @@ class SessionEngine:
             for event in reversed(self.events):
                 if len(observations) >= count:
                     break
-                if event.message.arbitration_id == selector.raw_arb_id and self._include_event(
-                    event, request.include_tx
-                ):
+                if event.message.arbitration_id == selector.raw_arb_id:
                     observations.append(self._raw_observation(event))
         else:
             message = self.dbcs.resolve_selector(selector)
@@ -197,7 +185,6 @@ class SessionEngine:
                 if (
                     event.message.arbitration_id == message.arb_id
                     and event.message.is_extended_id == message.extended
-                    and self._include_event(event, request.include_tx)
                 ):
                     observations.append(
                         SemanticObservation(
@@ -239,7 +226,7 @@ class SessionEngine:
                 timestamp=time.time(),
             )
         self.backend.send(message)
-        self.record_event(EventDirection.TX, message)
+        self.trace_message(EventDirection.TX, message)
         if request.periodicity_ms is not None:
             self.schedules[request.target] = PeriodicScheduleState(
                 target=request.target,
@@ -274,15 +261,15 @@ class SessionEngine:
         self.trace_path = None
         return path
 
-    def record_event(self, direction: EventDirection, message: can.Message) -> None:
+    def record_event(self, message: can.Message) -> None:
         received_at = time.time()
         message.timestamp = received_at
-        message.is_rx = direction == EventDirection.RX
+        message.is_rx = True
         event = ObservedEvent(
             seq=self.next_seq,
             unix_ms=int(received_at * 1000),
             monotonic=time.monotonic(),
-            direction=direction,
+            direction=EventDirection.RX,
             message=message,
         )
         self.next_seq += 1
@@ -290,17 +277,17 @@ class SessionEngine:
         identity = (message.arbitration_id, message.is_extended_id)
         latest = self.latest.get(identity)
         if latest is None:
-            latest = LatestObservation(latest_any=event)
+            latest = LatestObservation(latest_rx=event)
             self.latest[identity] = latest
         else:
             latest.observed_count += 1
-            latest.cycle_time_ms = (event.monotonic - latest.latest_any.monotonic) * 1000
-        latest.latest_any = event
-        if direction == EventDirection.RX:
-            latest.latest_rx = event
-        else:
-            latest.latest_tx = event
+            latest.cycle_time_ms = (event.monotonic - latest.latest_rx.monotonic) * 1000
+        latest.latest_rx = event
+        self.trace_message(EventDirection.RX, message)
+
+    def trace_message(self, direction: EventDirection, message: can.Message) -> None:
         if self.trace:
+            message.is_rx = direction == EventDirection.RX
             self.trace.on_message_received(message)
 
     def tick_schedules(self) -> None:
@@ -310,7 +297,7 @@ class SessionEngine:
                 continue
             schedule.message.timestamp = time.time()
             self.backend.send(schedule.message)
-            self.record_event(EventDirection.TX, schedule.message)
+            self.trace_message(EventDirection.TX, schedule.message)
             period = schedule.periodicity_ms / 1000
             while schedule.next_due <= now:
                 schedule.next_due += period
@@ -333,9 +320,6 @@ class SessionEngine:
             len=event.message.dlc,
             payload_hex=payload_to_hex(bytes(event.message.data)),
         )
-
-    def _include_event(self, event: ObservedEvent, include_tx: bool) -> bool:
-        return include_tx or event.direction == EventDirection.RX
 
 
 class SessionManager:
