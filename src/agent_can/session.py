@@ -52,6 +52,8 @@ class LatestObservation:
     latest_any: ObservedEvent
     latest_rx: ObservedEvent | None = None
     latest_tx: ObservedEvent | None = None
+    observed_count: int = 1
+    cycle_time_ms: float | None = None
 
     def visible(self, include_tx: bool) -> ObservedEvent | None:
         return self.latest_any if include_tx else self.latest_rx
@@ -146,7 +148,8 @@ class SessionEngine:
                             extended=event.message.is_extended_id,
                             fd=event.message.is_fd,
                             len=event.message.dlc,
-                            last_seen_unix_ms=event.unix_ms,
+                            observed_count=latest.observed_count,
+                            cycle_time_ms=latest.cycle_time_ms,
                             has_rx=latest.latest_rx is not None,
                             has_tx=latest.latest_tx is not None,
                         )
@@ -166,7 +169,8 @@ class SessionEngine:
                         extended=message.extended,
                         fd=message.fd,
                         len=event.message.dlc,
-                        last_seen_unix_ms=event.unix_ms,
+                        observed_count=latest.observed_count,
+                        cycle_time_ms=latest.cycle_time_ms,
                         has_rx=latest.latest_rx is not None,
                         has_tx=latest.latest_tx is not None,
                     )
@@ -288,6 +292,9 @@ class SessionEngine:
         if latest is None:
             latest = LatestObservation(latest_any=event)
             self.latest[identity] = latest
+        else:
+            latest.observed_count += 1
+            latest.cycle_time_ms = (event.monotonic - latest.latest_any.monotonic) * 1000
         latest.latest_any = event
         if direction == EventDirection.RX:
             latest.latest_rx = event

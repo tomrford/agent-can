@@ -150,7 +150,8 @@ class MessageListEntry(BaseModel):
     extended: bool
     fd: bool
     len: int
-    last_seen_unix_ms: int
+    observed_count: int
+    cycle_time_ms: float | None
     has_rx: bool
     has_tx: bool
 
