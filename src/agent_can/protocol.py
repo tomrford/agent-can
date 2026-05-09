@@ -48,7 +48,9 @@ class MessageReadRequest(BaseModel):
 class MessageSendRequest(BaseModel):
     target: str
     data: str | dict[str, float]
-    periodicity_ms: int | None = None
+    extended: bool = False
+    fd: bool = False
+    periodicity_ms: int | None = Field(default=None, ge=1)
 
 
 class MessageStopRequest(BaseModel):

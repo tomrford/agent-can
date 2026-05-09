@@ -36,6 +36,10 @@ from agent_can.selectors import Selector, parse_payload_hex, payload_to_hex
 RETENTION_WINDOW_SECS = 60
 RETENTION_EVENT_CAP = 4096
 POLL_INTERVAL_SECS = 0.001
+MAX_STANDARD_ARB_ID = 0x7FF
+MAX_EXTENDED_ARB_ID = 0x1FFFFFFF
+MAX_CLASSIC_PAYLOAD_LEN = 8
+MAX_FD_PAYLOAD_LEN = 64
 
 
 @dataclass
@@ -207,14 +211,18 @@ class SessionEngine:
             if not isinstance(request.data, str):
                 raise ValueError("raw target requires hex string payload")
             data = parse_payload_hex(request.data)
+            self._validate_raw_message(selector.raw_arb_id, data, request.extended, request.fd)
             message = can.Message(
                 arbitration_id=selector.raw_arb_id,
-                is_extended_id=False,
-                is_fd=len(data) > 8,
+                is_extended_id=request.extended,
+                is_fd=request.fd,
                 data=data,
                 timestamp=time.time(),
+                check=True,
             )
         else:
+            if request.extended or request.fd:
+                raise ValueError("extended/fd options are only valid for raw targets")
             if not isinstance(request.data, dict):
                 raise ValueError("semantic target requires signal map payload")
             message_def = self.dbcs.resolve_selector(selector)
@@ -245,6 +253,16 @@ class SessionEngine:
 
     def message_stop(self, request: MessageStopRequest) -> bool:
         return self.schedules.pop(request.target, None) is not None
+
+    def _validate_raw_message(self, arb_id: int, data: bytes, extended: bool, fd: bool) -> None:
+        max_arb_id = MAX_EXTENDED_ARB_ID if extended else MAX_STANDARD_ARB_ID
+        if arb_id < 0 or arb_id > max_arb_id:
+            frame_type = "extended" if extended else "standard"
+            raise ValueError(f"raw {frame_type} arbitration ID out of range")
+        max_len = MAX_FD_PAYLOAD_LEN if fd else MAX_CLASSIC_PAYLOAD_LEN
+        if len(data) > max_len:
+            frame_type = "CAN FD" if fd else "classic CAN"
+            raise ValueError(f"raw {frame_type} payload must be at most {max_len} bytes")
 
     def start_trace(self, request: TraceStartRequest) -> str:
         self.stop_trace()
@@ -292,15 +310,23 @@ class SessionEngine:
 
     def tick_schedules(self) -> None:
         now = time.monotonic()
+        failed_targets = []
         for schedule in self.schedules.values():
             if now < schedule.next_due:
                 continue
             schedule.message.timestamp = time.time()
-            self.backend.send(schedule.message)
-            self.trace_message(EventDirection.TX, schedule.message)
+            try:
+                self.backend.send(schedule.message)
+                self.trace_message(EventDirection.TX, schedule.message)
+            except Exception as err:
+                self.backend_error = str(err)
+                failed_targets.append(schedule.target)
+                continue
             period = schedule.periodicity_ms / 1000
             while schedule.next_due <= now:
                 schedule.next_due += period
+        for target in failed_targets:
+            self.schedules.pop(target, None)
 
     def trim_events(self) -> None:
         cutoff = time.monotonic() - RETENTION_WINDOW_SECS

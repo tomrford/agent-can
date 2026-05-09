@@ -20,11 +20,14 @@ from agent_can.session import SessionEngine
 class FakeBackend:
     def __init__(self) -> None:
         self.sent: list[can.Message] = []
+        self.fail_send = False
 
     def recv_all(self) -> list[can.Message]:
         return []
 
     def send(self, message: can.Message) -> None:
+        if self.fail_send:
+            raise RuntimeError("send failed")
         self.sent.append(message)
 
     def close(self) -> None:
@@ -86,6 +89,58 @@ def test_schema_and_raw_send() -> None:
     assert backend.sent[-1].data == bytearray.fromhex("DE AD BE EF")
 
 
+def test_extended_fd_raw_send() -> None:
+    engine, backend = make_engine()
+    payload = " ".join(["AA"] * 12)
+
+    sent = engine.message_send(
+        MessageSendRequest(target="0x18DAF110", data=payload, extended=True, fd=True)
+    )
+
+    assert sent.arb_id == 0x18DAF110
+    assert sent.extended is True
+    assert sent.fd is True
+    assert sent.len == 12
+    assert backend.sent[-1].is_extended_id is True
+    assert backend.sent[-1].is_fd is True
+    assert backend.sent[-1].data == bytearray.fromhex(payload)
+
+
+def test_raw_send_validates_id_range_and_payload_len() -> None:
+    engine, _backend = make_engine()
+
+    with pytest.raises(ValueError, match="standard arbitration ID out of range"):
+        engine.message_send(MessageSendRequest(target="0x800", data="00"))
+
+    with pytest.raises(ValueError, match="extended arbitration ID out of range"):
+        engine.message_send(MessageSendRequest(target="0x20000000", data="00", extended=True))
+
+    with pytest.raises(ValueError, match="classic CAN payload"):
+        engine.message_send(MessageSendRequest(target="0x123", data=" ".join(["00"] * 9)))
+
+    with pytest.raises(ValueError, match="CAN FD payload"):
+        engine.message_send(
+            MessageSendRequest(
+                target="0x123",
+                data=" ".join(["00"] * 65),
+                fd=True,
+            )
+        )
+
+
+def test_semantic_send_rejects_raw_options() -> None:
+    engine, _backend = make_engine()
+
+    with pytest.raises(ValueError, match="only valid for raw targets"):
+        engine.message_send(
+            MessageSendRequest(
+                target="demo.PowertrainStatus",
+                data=powertrain_payload(),
+                extended=True,
+            )
+        )
+
+
 def test_semantic_read_decodes_rx_only() -> None:
     engine, _backend = make_engine()
     record_powertrain_rx(engine)
@@ -119,3 +174,24 @@ def test_message_list_filter_matches_partial_names_case_insensitively() -> None:
         "demo": ["demo.PowertrainStatus"],
         "0x120": ["demo.PowertrainStatus"],
     }
+
+
+def test_periodic_send_requires_positive_periodicity() -> None:
+    with pytest.raises(ValueError):
+        MessageSendRequest(target="0x123", data="00", periodicity_ms=0)
+
+    with pytest.raises(ValueError):
+        MessageSendRequest(target="0x123", data="00", periodicity_ms=-1)
+
+
+def test_periodic_send_failure_is_reported_and_schedule_removed() -> None:
+    engine, backend = make_engine()
+    engine.message_send(MessageSendRequest(target="0x123", data="00", periodicity_ms=1))
+    schedule = engine.schedules["0x123"]
+    schedule.next_due = 0
+    backend.fail_send = True
+
+    engine.tick()
+
+    assert engine.backend_error == "send failed"
+    assert engine.schedules == {}

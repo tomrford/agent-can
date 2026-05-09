@@ -37,6 +37,26 @@ jobs:
       - name: Tests
         run: uv run pytest
 
+      - name: Check tag version
+        run: |
+          python - <<'PY'
+          import os
+          import pathlib
+          import re
+          import tomllib
+
+          tag = os.environ["GITHUB_REF_NAME"]
+          version = tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"]
+          init_text = pathlib.Path("src/agent_can/__init__.py").read_text()
+          match = re.search(r'^__version__ = "([^"]+)"$', init_text, re.MULTILINE)
+          init_version = match.group(1) if match else None
+          expected = f"v{version}"
+          if tag != expected or init_version != version:
+              raise SystemExit(
+                  f"version mismatch: tag={tag} pyproject={version} __version__={init_version}"
+              )
+          PY
+
       - name: Build package
         run: uv build --no-sources
 
