@@ -14,6 +14,13 @@ from agent_can.protocol import (
 from agent_can.selectors import Selector
 
 
+def _choice_label(choice: object) -> str:
+    name = getattr(choice, "name", None)
+    if isinstance(name, str):
+        return name
+    return str(choice)
+
+
 @dataclass(frozen=True)
 class MessageDef:
     alias: str
@@ -107,7 +114,9 @@ class DbcRegistry:
             value = decoded[signal.name]
             choice = None
             if signal.choices:
-                choice = signal.choices.get(int(value))
+                raw_choice = signal.choices.get(int(value))
+                if raw_choice is not None:
+                    choice = _choice_label(raw_choice)
             out.append(
                 DecodedSignalValue(
                     name=signal.name,
@@ -138,7 +147,9 @@ class DbcRegistry:
                     name=signal.name,
                     value_type="number",
                     unit=signal.unit,
-                    value_descriptions={int(k): v for k, v in (signal.choices or {}).items()},
+                    value_descriptions={
+                        int(k): _choice_label(v) for k, v in (signal.choices or {}).items()
+                    },
                     min=signal.minimum,
                     max=signal.maximum,
                     factor=float(signal.conversion.scale),

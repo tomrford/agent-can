@@ -153,7 +153,6 @@ class MessageListEntry(BaseModel):
     observed_count: int
     cycle_time_ms: float | None
     has_rx: bool
-    has_tx: bool
 
 
 class EventDirection(StrEnum):

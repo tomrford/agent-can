@@ -40,6 +40,24 @@ def demo_dbc_path() -> str:
     return str((Path(__file__).parents[1] / "examples" / "demo.dbc").resolve())
 
 
+def choice_dbc_path(tmp_path: Path) -> str:
+    path = tmp_path / "choices.dbc"
+    path.write_text(
+        """VERSION ""
+NS_ :
+  VAL_
+BS_:
+BU_: Agent Dashboard
+
+BO_ 512 ModeStatus: 1 Agent
+ SG_ mode : 0|8@1+ (1,0) [0|2] "" Dashboard
+
+VAL_ 512 mode 0 "Off" 1 "On";
+"""
+    )
+    return str(path)
+
+
 def make_engine() -> tuple[SessionEngine, FakeBackend]:
     request = ConnectRequest(
         interface="virtual",
@@ -73,6 +91,37 @@ def record_powertrain_rx(engine: SessionEngine) -> None:
             data=engine.backend.sent[-1].data,
         )
     )
+
+
+def test_schema_serializes_named_value_descriptions(tmp_path: Path) -> None:
+    request = ConnectRequest(
+        interface="virtual",
+        channel="agent-can",
+        bitrate=500_000,
+        dbcs=[DbcSpec(alias="choices", path=choice_dbc_path(tmp_path))],
+    )
+    engine = SessionEngine(request, DbcRegistry(request.dbcs), FakeBackend())
+
+    messages = engine.schema(SchemaRequest())
+
+    assert messages[0].signals[0].value_descriptions == {0: "Off", 1: "On"}
+
+
+def test_semantic_read_serializes_named_value_description(tmp_path: Path) -> None:
+    request = ConnectRequest(
+        interface="virtual",
+        channel="agent-can",
+        bitrate=500_000,
+        dbcs=[DbcSpec(alias="choices", path=choice_dbc_path(tmp_path))],
+    )
+    engine = SessionEngine(request, DbcRegistry(request.dbcs), FakeBackend())
+    engine.record_event(
+        can.Message(arbitration_id=0x200, is_extended_id=False, data=bytearray([1]))
+    )
+
+    read = engine.message_read(MessageReadRequest(select="choices.ModeStatus"))
+
+    assert read.observations[0].signals[0].value_description == "On"
 
 
 def test_schema_and_raw_send() -> None:

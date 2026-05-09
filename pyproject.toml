@@ -1,6 +1,6 @@
 [project]
 name = "agent-can"
-version = "0.1.0"
+version = "0.1.1"
 description = "Agent-first CAN control MCP server"
 readme = "README.md"
 requires-python = ">=3.12"

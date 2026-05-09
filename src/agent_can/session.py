@@ -148,7 +148,6 @@ class SessionEngine:
                             observed_count=latest.observed_count,
                             cycle_time_ms=latest.cycle_time_ms,
                             has_rx=True,
-                            has_tx=False,
                         )
                     )
                 continue
@@ -166,7 +165,6 @@ class SessionEngine:
                         observed_count=latest.observed_count,
                         cycle_time_ms=latest.cycle_time_ms,
                         has_rx=True,
-                        has_tx=False,
                     )
                 )
         return sorted(out, key=lambda item: item.label)
