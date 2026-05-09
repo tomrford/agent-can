@@ -5,13 +5,13 @@ from dataclasses import dataclass
 import cantools.database
 from cantools.database.can import Database, Message
 
-from agent_can_py.protocol import (
+from agent_can.protocol import (
     DbcSpec,
     DecodedSignalValue,
     SchemaMessage,
     SchemaSignal,
 )
-from agent_can_py.selectors import Selector
+from agent_can.selectors import Selector
 
 
 @dataclass(frozen=True)

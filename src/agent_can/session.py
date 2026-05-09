@@ -7,9 +7,9 @@ from dataclasses import dataclass
 
 import can
 
-from agent_can_py.backend import Backend, open_backend
-from agent_can_py.dbc import DbcRegistry
-from agent_can_py.protocol import (
+from agent_can.backend import Backend, open_backend
+from agent_can.dbc import DbcRegistry
+from agent_can.protocol import (
     ConnectRequest,
     ConnectResult,
     EventDirection,
@@ -31,7 +31,7 @@ from agent_can_py.protocol import (
     SessionStatus,
     TraceStartRequest,
 )
-from agent_can_py.selectors import Selector, parse_payload_hex, payload_to_hex
+from agent_can.selectors import Selector, parse_payload_hex, payload_to_hex
 
 RETENTION_WINDOW_SECS = 60
 RETENTION_EVENT_CAP = 4096
@@ -271,12 +271,12 @@ class SessionEngine:
         return path
 
     def record_event(self, direction: EventDirection, message: can.Message) -> None:
-        if not message.timestamp:
-            message.timestamp = time.time()
+        received_at = time.time()
+        message.timestamp = received_at
         message.is_rx = direction == EventDirection.RX
         event = ObservedEvent(
             seq=self.next_seq,
-            unix_ms=int(message.timestamp * 1000),
+            unix_ms=int(received_at * 1000),
             monotonic=time.monotonic(),
             direction=direction,
             message=message,

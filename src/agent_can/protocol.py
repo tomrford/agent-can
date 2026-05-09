@@ -77,11 +77,6 @@ class BusInfo(BaseModel):
     channel: str | int
     name: str | None = None
     device_name: str | None = None
-    device_id: int | None = None
-    controller_number: int | None = None
-    channel_condition: str | None = None
-    features: list[str] = Field(default_factory=list)
-    part_number: str | None = None
 
 
 class LoadedDbc(BaseModel):

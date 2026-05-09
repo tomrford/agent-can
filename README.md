@@ -1,4 +1,4 @@
-# agent-can-py
+# agent-can
 
 Python CAN MCP server spike built around `python-can` and `cantools`.
 
@@ -7,7 +7,7 @@ No web monitor is included in this spike.
 ## Run
 
 ```sh
-uv run agent-can-py
+uv run agent-can
 ```
 
 Demo mode works without hardware:

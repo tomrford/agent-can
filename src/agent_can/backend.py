@@ -5,7 +5,7 @@ from typing import Protocol
 
 import can
 
-from agent_can_py.protocol import BusInfo, ConnectRequest
+from agent_can.protocol import BusInfo, ConnectRequest
 
 
 class Backend(Protocol):
