@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import time
 
 import can
 import pytest
@@ -15,6 +16,7 @@ from agent_can.protocol import (
     SchemaRequest,
 )
 from agent_can.session import SessionEngine
+from agent_can import server
 
 
 class FakeBackend:
@@ -184,6 +186,11 @@ def test_periodic_send_requires_positive_periodicity() -> None:
         MessageSendRequest(target="0x123", data="00", periodicity_ms=-1)
 
 
+def test_message_read_requires_positive_count() -> None:
+    with pytest.raises(ValueError):
+        MessageReadRequest(select="0x123", count=0)
+
+
 def test_periodic_send_failure_is_reported_and_schedule_removed() -> None:
     engine, backend = make_engine()
     engine.message_send(MessageSendRequest(target="0x123", data="00", periodicity_ms=1))
@@ -195,3 +202,44 @@ def test_periodic_send_failure_is_reported_and_schedule_removed() -> None:
 
     assert engine.backend_error == "send failed"
     assert engine.schedules == {}
+
+
+def test_trim_events_prunes_latest_observations() -> None:
+    engine, _backend = make_engine()
+    old_message = can.Message(arbitration_id=0x100, is_extended_id=False, data=[0])
+    new_message = can.Message(arbitration_id=0x101, is_extended_id=False, data=[1])
+    engine.record_event(old_message)
+    engine.record_event(new_message)
+
+    engine.events[0].monotonic = time.monotonic() - 120
+    engine.trim_events()
+
+    assert [event.message.arbitration_id for event in engine.events] == [0x101]
+    assert list(engine.latest) == [(0x101, False)]
+
+
+@pytest.mark.anyio
+async def test_mcp_message_send_forwards_raw_frame_options(
+    monkeypatch: pytest.MonkeyPatch, anyio_backend: str
+) -> None:
+    assert anyio_backend == "asyncio"
+    engine, backend = make_engine()
+
+    class FakeSessions:
+        async def engine(self) -> SessionEngine:
+            return engine
+
+    monkeypatch.setattr(server, "sessions", FakeSessions())
+
+    result = await server.message_send(
+        target="0x18DAF110",
+        data="AA BB CC DD EE FF 00 11 22",
+        extended=True,
+        fd=True,
+    )
+
+    assert result["arb_id"] == 0x18DAF110
+    assert result["extended"] is True
+    assert result["fd"] is True
+    assert backend.sent[-1].is_extended_id is True
+    assert backend.sent[-1].is_fd is True

@@ -90,11 +90,19 @@ async def message_read(
 async def message_send(
     target: str,
     data: str | dict[str, float],
+    extended: bool = False,
+    fd: bool = False,
     periodicity_ms: int | None = None,
 ) -> dict:
     """Send one message by target shape."""
     engine = await sessions.engine()
-    request = MessageSendRequest(target=target, data=data, periodicity_ms=periodicity_ms)
+    request = MessageSendRequest(
+        target=target,
+        data=data,
+        extended=extended,
+        fd=fd,
+        periodicity_ms=periodicity_ms,
+    )
     return engine.message_send(request).model_dump()
 
 
@@ -108,7 +116,7 @@ async def message_stop(target: str) -> dict:
 
 @mcp.tool()
 async def trace_start(path: str) -> dict:
-    """Start one raw ASCII trace export for the active session."""
+    """Start one python-can trace export for the active session."""
     engine = await sessions.engine()
     request = TraceStartRequest(path=path)
     return {"path": engine.start_trace(request)}

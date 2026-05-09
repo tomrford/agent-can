@@ -43,7 +43,6 @@ class MessageDef:
 
 class DbcRegistry:
     def __init__(self, specs: list[DbcSpec]) -> None:
-        self.specs = specs
         self._messages: list[MessageDef] = []
         self._messages_by_qualified_name: dict[str, MessageDef] = {}
         self._by_frame: dict[tuple[int, bool], list[MessageDef]] = {}
@@ -82,12 +81,13 @@ class DbcRegistry:
             matches = [
                 message for message in self._messages if selector.matches_arb_id(message.arb_id)
             ]
+        elif selector.semantic_pattern is not None:
+            try:
+                return self._messages_by_qualified_name[selector.semantic_pattern]
+            except KeyError:
+                raise ValueError("selector matched no DBC messages") from None
         else:
-            matches = [
-                message
-                for message in self._messages
-                if selector.matches_exact_name(message.qualified_name)
-            ]
+            matches = []
         if not matches:
             raise ValueError("selector matched no DBC messages")
         if len(matches) > 1:

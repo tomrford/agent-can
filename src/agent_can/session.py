@@ -334,6 +334,15 @@ class SessionEngine:
             self.events and self.events[0].monotonic < cutoff
         ):
             self.events.popleft()
+        if self.events:
+            min_seq = self.events[0].seq
+            self.latest = {
+                identity: latest
+                for identity, latest in self.latest.items()
+                if latest.latest_rx.seq >= min_seq and latest.latest_rx.monotonic >= cutoff
+            }
+        else:
+            self.latest.clear()
 
     def _raw_observation(self, event: ObservedEvent) -> RawObservation:
         return RawObservation(
@@ -351,14 +360,13 @@ class SessionEngine:
 class SessionManager:
     def __init__(self) -> None:
         self._engine: SessionEngine | None = None
-        self._connect: ConnectRequest | None = None
         self._task: asyncio.Task[None] | None = None
         self._lock = asyncio.Lock()
 
     async def connect(self, request: ConnectRequest) -> ConnectResult:
         async with self._lock:
             if self._engine is not None:
-                if self._connect == request:
+                if self._engine.connect == request:
                     return ConnectResult(
                         created=False,
                         already_connected=True,
@@ -368,7 +376,6 @@ class SessionManager:
             dbcs = DbcRegistry(request.dbcs)
             backend = open_backend(request)
             self._engine = SessionEngine(request, dbcs, backend)
-            self._connect = request
             self._task = asyncio.create_task(self._run())
             return ConnectResult(
                 created=True, already_connected=False, status=self._engine.status()
@@ -380,7 +387,6 @@ class SessionManager:
                 raise ValueError("no active session; connect first")
             self._engine.disconnect()
             self._engine = None
-            self._connect = None
             task = self._task
             self._task = None
         if task:

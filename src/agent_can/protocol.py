@@ -42,7 +42,7 @@ class MessageListRequest(BaseModel):
 
 class MessageReadRequest(BaseModel):
     select: str
-    count: int | None = None
+    count: int | None = Field(default=None, ge=1)
 
 
 class MessageSendRequest(BaseModel):

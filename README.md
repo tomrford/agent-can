@@ -61,7 +61,7 @@ Semantic sends use `target: "alias.MessageName"` and a signal map:
 }
 ```
 
-Selectors accept raw arbitration IDs such as `0x123` or semantic names such as `alias.MessageName`. DBC paths and trace paths must be absolute.
+Send and read targets accept raw arbitration IDs such as `0x123` or exact semantic names such as `alias.MessageName`. Schema and message-list filters also accept partial or glob-style semantic names. DBC paths and trace paths must be absolute.
 
 Periodic sends require `periodicity_ms` of at least `1`.
 
