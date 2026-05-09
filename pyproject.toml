@@ -1,0 +1,32 @@
+[project]
+name = "agent-can-py"
+version = "0.0.0"
+description = "Python spike for an agent-first CAN MCP server"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "cantools>=39.4.0",
+    "mcp>=1.14.0",
+    "pydantic>=2.11.0",
+    "python-can>=4.6.0",
+]
+
+[project.scripts]
+agent-can-py = "agent_can_py.server:main"
+
+[build-system]
+requires = ["uv_build>=0.9.0,<0.10.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+    "ruff>=0.14.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,27 @@
+VERSION ""
+
+NS_ :
+  NS_DESC_
+  CM_
+  BA_DEF_
+  BA_
+  VAL_
+
+BS_:
+
+BU_: Agent Dashboard
+
+BO_ 256 Heartbeat: 2 Agent
+ SG_ counter : 0|8@1+ (1,0) [0|255] "" Dashboard
+ SG_ mode : 8|8@1+ (1,0) [0|4] "" Dashboard
+
+BO_ 288 PowertrainStatus: 8 Agent
+ SG_ vehicle_speed : 0|16@1+ (0.1,0) [0|250] "km/h" Dashboard
+ SG_ engine_rpm : 16|16@1+ (1,0) [0|8000] "rpm" Dashboard
+ SG_ throttle : 32|8@1+ (0.5,0) [0|100] "%" Dashboard
+ SG_ coolant_temp : 40|8@1+ (1,-40) [-40|215] "degC" Dashboard
+
+BO_ 304 BodyStatus: 3 Agent
+ SG_ left_signal : 0|8@1+ (1,0) [0|1] "" Dashboard
+ SG_ right_signal : 8|8@1+ (1,0) [0|1] "" Dashboard
+ SG_ battery_voltage : 16|8@1+ (0.1,0) [0|25.5] "V" Dashboard
