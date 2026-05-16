@@ -19,9 +19,13 @@ classifiers = [
 ]
 dependencies = [
     "cantools>=39.4.0",
+    "datastar-py>=1.0.0",
     "mcp>=1.14.0",
     "pydantic>=2.11.0",
     "python-can>=4.6.0",
+    "python-fasthtml>=0.13.4",
+    "starlette>=1.0.0",
+    "uvicorn>=0.46.0",
 ]
 
 [project.scripts]

@@ -106,6 +106,7 @@ class SessionStatus(BaseModel):
     backend_error: str | None
     retention_window_secs: int
     retention_event_cap: int
+    web_url: str | None = None
 
 
 class ConnectResult(BaseModel):

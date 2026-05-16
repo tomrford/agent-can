@@ -10,6 +10,7 @@ from agent_can.dbc import DbcRegistry
 from agent_can.protocol import (
     ConnectRequest,
     DbcSpec,
+    EventDirection,
     MessageListRequest,
     MessageReadRequest,
     MessageSendRequest,
@@ -264,7 +265,7 @@ def test_trim_events_prunes_latest_observations() -> None:
     engine.trim_events()
 
     assert [event.message.arbitration_id for event in engine.events] == [0x101]
-    assert list(engine.latest) == [(0x101, False)]
+    assert list(engine.latest) == [(0x101, False, EventDirection.RX)]
 
 
 @pytest.mark.anyio

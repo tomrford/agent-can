@@ -72,11 +72,13 @@ class SessionEngine:
         self.dbcs = dbcs
         self.backend = backend
         self.events: deque[ObservedEvent] = deque()
-        self.latest: dict[tuple[int, bool], LatestObservation] = {}
+        self.latest: dict[tuple[int, bool, EventDirection], LatestObservation] = {}
         self.schedules: dict[str, PeriodicScheduleState] = {}
         self.trace: can.Listener | None = None
         self.trace_path: str | None = None
         self.backend_error: str | None = None
+        self.web_url: str | None = None
+        self.dashboard_revision = 0
         self.next_seq = 1
         self.shutdown = False
 
@@ -104,6 +106,7 @@ class SessionEngine:
             backend_error=self.backend_error,
             retention_window_secs=RETENTION_WINDOW_SECS,
             retention_event_cap=RETENTION_EVENT_CAP,
+            web_url=self.web_url,
         )
 
     def tick(self) -> None:
@@ -111,7 +114,7 @@ class SessionEngine:
             for message in self.backend.recv_all():
                 self.record_event(message)
         except Exception as err:
-            self.backend_error = str(err)
+            self.set_backend_error(str(err))
         self.tick_schedules()
         self.trim_events()
 
@@ -120,6 +123,7 @@ class SessionEngine:
         self.stop_trace()
         self.backend.close()
         self.shutdown = True
+        self.mark_dashboard_dirty()
 
     def schema(self, request: SchemaRequest) -> list[SchemaMessage]:
         selector = Selector.parse(request.filter) if request.filter else None
@@ -130,6 +134,8 @@ class SessionEngine:
         out: list[MessageListEntry] = []
         for latest in self.latest.values():
             event = latest.latest_rx
+            if event.direction != EventDirection.RX:
+                continue
             matches = self.dbcs.matches_for_frame(
                 event.message.arbitration_id, event.message.is_extended_id
             )
@@ -233,6 +239,7 @@ class SessionEngine:
             )
         self.backend.send(message)
         self.trace_message(EventDirection.TX, message)
+        self.record_tx_event(message)
         if request.periodicity_ms is not None:
             self.schedules[request.target] = PeriodicScheduleState(
                 target=request.target,
@@ -240,6 +247,7 @@ class SessionEngine:
                 periodicity_ms=request.periodicity_ms,
                 next_due=time.monotonic() + (request.periodicity_ms / 1000),
             )
+            self.mark_dashboard_dirty()
         return MessageSendResult(
             target=request.target,
             arb_id=message.arbitration_id,
@@ -250,7 +258,10 @@ class SessionEngine:
         )
 
     def message_stop(self, request: MessageStopRequest) -> bool:
-        return self.schedules.pop(request.target, None) is not None
+        stopped = self.schedules.pop(request.target, None) is not None
+        if stopped:
+            self.mark_dashboard_dirty()
+        return stopped
 
     def _validate_raw_message(self, arb_id: int, data: bytes, extended: bool, fd: bool) -> None:
         max_arb_id = MAX_EXTENDED_ARB_ID if extended else MAX_STANDARD_ARB_ID
@@ -266,6 +277,7 @@ class SessionEngine:
         self.stop_trace()
         self.trace = can.Logger(request.path)
         self.trace_path = request.path
+        self.mark_dashboard_dirty()
         return request.path
 
     def stop_trace(self) -> str | None:
@@ -275,22 +287,30 @@ class SessionEngine:
         self.trace.stop()
         self.trace = None
         self.trace_path = None
+        self.mark_dashboard_dirty()
         return path
 
     def record_event(self, message: can.Message) -> None:
+        self._record_message(EventDirection.RX, message)
+        self.trace_message(EventDirection.RX, message)
+
+    def record_tx_event(self, message: can.Message) -> None:
+        self._record_message(EventDirection.TX, message)
+
+    def _record_message(self, direction: EventDirection, message: can.Message) -> None:
         received_at = time.time()
         message.timestamp = received_at
-        message.is_rx = True
+        message.is_rx = direction == EventDirection.RX
         event = ObservedEvent(
             seq=self.next_seq,
             unix_ms=int(received_at * 1000),
             monotonic=time.monotonic(),
-            direction=EventDirection.RX,
+            direction=direction,
             message=message,
         )
         self.next_seq += 1
         self.events.append(event)
-        identity = (message.arbitration_id, message.is_extended_id)
+        identity = (message.arbitration_id, message.is_extended_id, direction)
         latest = self.latest.get(identity)
         if latest is None:
             latest = LatestObservation(latest_rx=event)
@@ -299,7 +319,7 @@ class SessionEngine:
             latest.observed_count += 1
             latest.cycle_time_ms = (event.monotonic - latest.latest_rx.monotonic) * 1000
         latest.latest_rx = event
-        self.trace_message(EventDirection.RX, message)
+        self.mark_dashboard_dirty()
 
     def trace_message(self, direction: EventDirection, message: can.Message) -> None:
         if self.trace:
@@ -316,8 +336,9 @@ class SessionEngine:
             try:
                 self.backend.send(schedule.message)
                 self.trace_message(EventDirection.TX, schedule.message)
+                self.record_tx_event(schedule.message)
             except Exception as err:
-                self.backend_error = str(err)
+                self.set_backend_error(str(err))
                 failed_targets.append(schedule.target)
                 continue
             period = schedule.periodicity_ms / 1000
@@ -325,6 +346,8 @@ class SessionEngine:
                 schedule.next_due += period
         for target in failed_targets:
             self.schedules.pop(target, None)
+        if failed_targets:
+            self.mark_dashboard_dirty()
 
     def trim_events(self) -> None:
         cutoff = time.monotonic() - RETENTION_WINDOW_SECS
@@ -341,6 +364,14 @@ class SessionEngine:
             }
         else:
             self.latest.clear()
+
+    def set_backend_error(self, error: str | None) -> None:
+        if self.backend_error != error:
+            self.backend_error = error
+            self.mark_dashboard_dirty()
+
+    def mark_dashboard_dirty(self) -> None:
+        self.dashboard_revision += 1
 
     def _raw_observation(self, event: ObservedEvent) -> RawObservation:
         return RawObservation(
@@ -359,6 +390,8 @@ class SessionManager:
     def __init__(self) -> None:
         self._engine: SessionEngine | None = None
         self._task: asyncio.Task[None] | None = None
+        self._web = None
+        self._condition = asyncio.Condition()
         self._lock = asyncio.Lock()
 
     async def connect(self, request: ConnectRequest) -> ConnectResult:
@@ -374,6 +407,11 @@ class SessionManager:
             dbcs = DbcRegistry(request.dbcs)
             backend = open_backend(request)
             self._engine = SessionEngine(request, dbcs, backend)
+            from agent_can.web import start_web_server
+
+            self._web = await start_web_server(self)
+            if self._web:
+                self._engine.web_url = self._web.url
             self._task = asyncio.create_task(self._run())
             return ConnectResult(
                 created=True, already_connected=False, status=self._engine.status()
@@ -385,8 +423,12 @@ class SessionManager:
                 raise ValueError("no active session; connect first")
             self._engine.disconnect()
             self._engine = None
+            web = self._web
+            self._web = None
             task = self._task
             self._task = None
+        if web:
+            await web.stop()
         if task:
             await task
         return True
@@ -396,7 +438,25 @@ class SessionManager:
             raise ValueError("no active session; connect first")
         return self._engine
 
+    async def wait_for_dashboard_change(self, revision: int, timeout: float) -> int:
+        async with self._condition:
+            await asyncio.wait_for(
+                self._condition.wait_for(
+                    lambda: self._engine is None
+                    or self._engine.dashboard_revision > revision
+                    or self._engine.shutdown
+                ),
+                timeout=timeout,
+            )
+            if self._engine is None:
+                return revision
+            return self._engine.dashboard_revision
+
     async def _run(self) -> None:
         while self._engine is not None and not self._engine.shutdown:
+            previous_revision = self._engine.dashboard_revision
             self._engine.tick()
+            if self._engine.dashboard_revision != previous_revision:
+                async with self._condition:
+                    self._condition.notify_all()
             await asyncio.sleep(POLL_INTERVAL_SECS)

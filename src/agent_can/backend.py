@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from typing import Protocol
 
 import can
@@ -44,12 +45,76 @@ class PythonCanBackend:
         self.bus.shutdown()
 
 
+class DemoBackend:
+    def __init__(self) -> None:
+        self._next_due = time.monotonic()
+        self._tick = 0
+        self._sent: list[can.Message] = []
+
+    def recv_all(self) -> list[can.Message]:
+        now = time.monotonic()
+        if now < self._next_due:
+            return []
+        messages = []
+        while self._next_due <= now and len(messages) < 32:
+            self._tick += 1
+            speed = self._tick % 250
+            rpm = 800 + (self._tick * 40) % 5200
+            throttle = (self._tick * 3) % 100
+            coolant = 70 + (self._tick // 20) % 25
+            speed_raw = int(speed * 10)
+            throttle_raw = int(throttle / 0.5)
+            coolant_raw = coolant + 40
+            messages.append(
+                can.Message(
+                    arbitration_id=0x120,
+                    is_extended_id=False,
+                    data=[
+                        speed_raw & 0xFF,
+                        speed_raw >> 8,
+                        rpm & 0xFF,
+                        rpm >> 8,
+                        throttle_raw,
+                        coolant_raw,
+                        0,
+                        0,
+                    ],
+                    timestamp=time.time(),
+                )
+            )
+            if self._tick % 8 == 0:
+                messages.append(
+                    can.Message(
+                        arbitration_id=0x130,
+                        is_extended_id=False,
+                        data=[(self._tick // 8) % 2, (self._tick // 13) % 2, 120],
+                        timestamp=time.time(),
+                    )
+                )
+            self._next_due += 0.001
+        return messages
+
+    def send(self, message: can.Message) -> None:
+        self._sent.append(message)
+
+    def close(self) -> None:
+        return
+
+
 def open_backend(request: ConnectRequest) -> Backend:
+    if request.interface == "demo":
+        return DemoBackend()
     return PythonCanBackend.open(request)
 
 
 def available_buses() -> list[BusInfo]:
     buses = [
+        BusInfo(
+            interface="demo",
+            channel="agent-can-demo",
+            name="temporary demo traffic",
+            device_name="agent-can browser test backend",
+        ),
         BusInfo(
             interface="virtual",
             channel="agent-can",
