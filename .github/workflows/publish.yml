@@ -1,12 +1,11 @@
 name: Publish
 
 on:
-  push:
-    tags:
-      - "v*.*.*"
+  release:
+    types: [published]
 
 permissions:
-  contents: write
+  contents: read
   id-token: write
 
 jobs:
@@ -17,6 +16,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
 
       - name: Install uv
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
@@ -28,16 +30,9 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
-        run: uv sync --locked --dev
-
-      - name: Ruff
-        run: uv run ruff check .
-
-      - name: Tests
-        run: uv run pytest
-
-      - name: Check tag version
+      - name: Validate release tag
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           python - <<'PY'
           import os
@@ -45,7 +40,7 @@ jobs:
           import re
           import tomllib
 
-          tag = os.environ["GITHUB_REF_NAME"]
+          tag = os.environ["RELEASE_TAG"]
           version = tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"]
           init_text = pathlib.Path("src/agent_can/__init__.py").read_text()
           match = re.search(r'^__version__ = "([^"]+)"$', init_text, re.MULTILINE)
@@ -56,14 +51,24 @@ jobs:
                   f"version mismatch: tag={tag} pyproject={version} __version__={init_version}"
               )
           PY
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          tag_commit="$(git rev-list -n 1 "${RELEASE_TAG}^{commit}")"
+          if ! git merge-base --is-ancestor "$tag_commit" origin/main; then
+            echo "release tag ${RELEASE_TAG} is not reachable from origin/main"
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: uv sync --locked --dev
+
+      - name: Ruff
+        run: uv run ruff check .
+
+      - name: Tests
+        run: uv run pytest
 
       - name: Build package
         run: uv build --no-sources
 
       - name: Publish package
         run: uv publish
-
-      - name: Create GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" --generate-notes
