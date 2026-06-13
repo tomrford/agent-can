@@ -10,6 +10,7 @@ permissions:
 
 jobs:
   publish:
+    if: ${{ !github.event.release.prerelease }}
     name: Publish to PyPI
     runs-on: ubuntu-latest
     environment: pypi
