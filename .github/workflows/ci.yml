@@ -25,9 +25,9 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: "1.26.6"
-      - uses: actions/setup-node@v6
+      - uses: ./.github/actions/setup-sfw
         with:
-          node-version: "24"
+          token: ${{ github.token }}
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           enable-cache: true
@@ -38,17 +38,21 @@ jobs:
         run: |
           go test -race ./...
           go vet ./...
-          test -z "$(gofmt -l cmd internal)"
+          unformatted=$(gofmt -l cmd internal)
+          if [[ -n "$unformatted" ]]; then
+            printf '%s\n' "$unformatted"
+            exit 1
+          fi
       - name: Launcher checks
         run: |
-          npx --yes sfw@2.0.6 uv sync --locked --dev
-          npx --yes sfw@2.0.6 uv run ruff check .
-          npx --yes sfw@2.0.6 uv run pytest
+          sfw uv sync --locked --dev
+          sfw uv run ruff check .
+          sfw uv run pytest
       - name: Build source distribution and native wheel
-        run: npx --yes sfw@2.0.6 uv build --no-sources
+        run: sfw uv build --no-sources
       - name: Test installed wheel
         run: |
-          npx --yes sfw@2.0.6 uv run --no-project --exclude-newer '7 days' --with ./dist/*.whl --with pytest python -m pytest tests/test_package.py
+          sfw uv run --no-project --exclude-newer '7 days' --with ./dist/*.whl --with pytest python -m pytest tests/test_package.py
       - uses: actions/upload-artifact@v4
         with:
           name: wheel-${{ matrix.os }}

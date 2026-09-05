@@ -16,14 +16,14 @@ jobs:
         with:
           fetch-depth: 0
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
-      - uses: actions/setup-node@v6
+      - uses: ./.github/actions/setup-sfw
         with:
-          node-version: "24"
+          token: ${{ github.token }}
       - name: Validate release version and ancestry
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          npx --yes sfw@2.0.6 uv run --no-project --python 3.12 python - <<'PY'
+          sfw uv run --no-project --python 3.12 python - <<'PY'
           import os
           import pathlib
           import re
@@ -45,8 +45,13 @@ jobs:
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
+      contents: read
       id-token: write
     steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-sfw
+        with:
+          token: ${{ github.token }}
       - uses: actions/download-artifact@v4
         with:
           pattern: wheel-*
@@ -57,8 +62,5 @@ jobs:
           name: sdist
           path: dist
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
-      - uses: actions/setup-node@v6
-        with:
-          node-version: "24"
       - name: Publish tested distributions
-        run: npx --yes sfw@2.0.6 uv publish
+        run: sfw uv publish
