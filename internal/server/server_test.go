@@ -53,7 +53,7 @@ func TestMCPDiscoveryValidationAndSession(t *testing.T) {
 	call("connect", map[string]any{"interface": "virtual", "channel": "virtual:agent-can"}, false)
 	call("message_send", map[string]any{"target": "0x123", "data": "AA", "unknown_flag": true}, true)
 	call("message_send", map[string]any{"target": "0x123", "data": strings.Repeat("AB", 12), "extended": true, "fd": true}, false)
-	result := call("message_read", map[string]any{"select": "0x123", "direction": "tx"}, false)
+	result := call("message_read", map[string]any{"select": "0x123", "direction": "tx", "extended": true}, false)
 	encoded, err := json.Marshal(result.StructuredContent)
 	if err != nil {
 		t.Fatal(err)

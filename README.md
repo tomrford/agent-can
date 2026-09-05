@@ -108,9 +108,10 @@ remain visible in `status`. `message_stop` accepts the same target and, for raw
 extended schedules, `extended: true`.
 
 `message_read` takes `select`, optional `count` (1–4096, default 1), and optional
-`direction` (`rx` by default, or `tx` for accepted transmissions). Results are newest
-first. Raw-ID reads can include both standard and extended frames and always expose
-their flags. Semantic observations contain a signal-name map of values and units;
+`direction` (`rx` by default, or `tx` for accepted transmissions). Results follow
+reverse capture order, including when timestamps tie or regress. Raw reads select
+standard CAN by default; use `extended: true` for 29-bit frames. Semantic names
+determine their own frame format. Semantic observations contain a signal-name map of values and units;
 enumerations decode to their choice label. `signal_errors` reports inactive,
 malformed or non-finite signals while retaining the raw frame and other signals.
 

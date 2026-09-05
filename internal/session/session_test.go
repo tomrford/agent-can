@@ -129,13 +129,45 @@ func TestFDIdentityAndRXTXSeparation(t *testing.T) {
 		t.Fatalf("DLC confused with length: %v", result)
 	}
 	count := 2
-	read, err := m.Read(ctx, ReadRequest{Select: "0x123", Count: &count, Direction: "tx"})
-	if err != nil {
-		t.Fatal(err)
+	for _, extended := range []bool{false, true} {
+		read, err := m.Read(ctx, ReadRequest{Select: "0x123", Extended: extended, Count: &count, Direction: "tx"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows := read["observations"].([]Result)
+		if len(rows) != 1 || rows[0]["extended"] != extended || rows[0]["direction"] != "tx" {
+			t.Fatalf("identity/direction mismatch: %v", rows)
+		}
 	}
-	rows := read["observations"].([]Result)
-	if len(rows) != 2 || rows[0]["extended"] != true || rows[1]["extended"] != false || rows[0]["direction"] != "tx" {
-		t.Fatalf("identity/direction mismatch: %v", rows)
+}
+
+func TestReadUsesCaptureOrderWhenTimestampsTieOrRegress(t *testing.T) {
+	m := connected(t, false)
+	base := time.Now().Add(-time.Second)
+	for index, stamp := range []time.Time{base, base, base.Add(-time.Millisecond)} {
+		frame, err := gocan.NewFrame(0x123, []byte{byte(index + 1)}, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := m.engine.capture.Append(gocan.FrameEvent{Bus: 1, Timestamp: stamp, Direction: gocan.DirectionReceive, Frame: frame}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, count := range []int{1, 2, 3} {
+		read, err := m.Read(context.Background(), ReadRequest{Select: "0x123", Count: &count})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows := read["observations"].([]Result)
+		want := []string{"03", "02", "01"}
+		if len(rows) != count {
+			t.Fatalf("count %d: %v", count, rows)
+		}
+		for i, row := range rows {
+			if row["payload_hex"] != want[i] {
+				t.Fatalf("count %d: %v", count, rows)
+			}
+		}
 	}
 }
 

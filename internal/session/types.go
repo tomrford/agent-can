@@ -44,6 +44,7 @@ type ListRequest struct {
 }
 type ReadRequest struct {
 	Select    string `json:"select" jsonschema:"Raw hex arbitration ID or exact alias.Message name"`
+	Extended  bool   `json:"extended,omitempty" jsonschema:"Select 29-bit raw frames; semantic names determine their own format"`
 	Count     *int   `json:"count,omitempty" jsonschema:"Newest observations to return, from 1 to 4096; default 1"`
 	Direction string `json:"direction,omitempty" jsonschema:"rx (default) or tx; accepted sends are separate from received traffic"`
 }

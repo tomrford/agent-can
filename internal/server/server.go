@@ -17,7 +17,7 @@ func New(sessions *session.Manager, version string) *mcp.Server {
 	add(s, "status", "Connection, DBCs, schedule health, trace state, capture retention and supported trace formats.", sessions.Status)
 	add(s, "schema", "Discover the connect-time DBC catalog. Filter by raw ID, case-insensitive partial name or glob.", sessions.Schema)
 	add(s, "message_list", "Inventory of received traffic in the last 60 seconds, without decoded values. Raw unmatched messages require allow_raw when DBCs are loaded.", sessions.List)
-	add(s, "message_read", "Read the newest retained frames for an exact selector, newest first. Defaults to RX; select tx for accepted transmissions. Semantic values include units and choice labels; signal_errors reports undecodable or inactive signals.", sessions.Read)
+	add(s, "message_read", "Read one exact frame identity in reverse capture order. Raw reads default to standard CAN; use extended for 29-bit frames. Defaults to RX; select tx for accepted transmissions. Semantic values include units and choice labels; signal_errors reports undecodable or inactive signals.", sessions.Read)
 	add(s, "message_send", "Send a raw frame or complete semantic signal map. Periodic sends belong to the session and survive this call. Raw CAN FD lengths must be 0-8, 12, 16, 20, 24, 32, 48 or 64 bytes.", sessions.Send)
 	add(s, "message_stop", "Stop a periodic schedule by exact target. For raw targets, extended selects the 29-bit schedule.", sessions.Stop)
 	add(s, "trace_start", "Start ASC recording of future RX, accepted TX and controller events. Omit path for an automatically named file. Existing files are never overwritten.", sessions.TraceStart)

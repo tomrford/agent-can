@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -49,29 +48,32 @@ func (m *Manager) Read(_ context.Context, request ReadRequest) (Result, error) {
 		return nil, err
 	}
 	var def messageDef
-	extended := []bool{false, true}
+	extended := request.Extended
 	if !raw {
+		if request.Extended {
+			return nil, errors.New("extended is only valid for raw targets")
+		}
 		def, err = e.registry.resolve(request.Select)
 		if err != nil {
 			return nil, err
 		}
-		id, extended = def.message.ID, []bool{def.message.Extended}
+		id, extended = def.message.ID, def.message.Extended
 	}
 	frames := []gocan.FrameEvent{}
-	for _, ext := range extended {
-		key := gocan.FrameKey{ID: id, Bus: e.bus.ID(), Direction: direction, Extended: ext}
-		if count == 1 {
-			if event, ok := e.capture.Latest(key); ok {
-				frames = append(frames, event)
-			}
-		} else {
-			frames = append(frames, e.capture.Series(key)...)
+	key := gocan.FrameKey{ID: id, Bus: e.bus.ID(), Direction: direction, Extended: extended}
+	if count == 1 {
+		if event, ok := e.capture.Latest(key); ok {
+			frames = append(frames, event)
 		}
+	} else {
+		frames = e.capture.Series(key)
 	}
-	sort.SliceStable(frames, func(i, j int) bool { return frames[i].Timestamp.After(frames[j].Timestamp) })
 	observations := []Result{}
 	cutoff := time.Now().Add(-retention)
-	for _, event := range frames {
+	// Capture order remains meaningful when acquisition timestamps tie or
+	// regress. Series returns append order, so walk it backwards.
+	for index := len(frames) - 1; index >= 0; index-- {
+		event := frames[index]
 		if event.Timestamp.Before(cutoff) {
 			continue
 		}
