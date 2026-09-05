@@ -33,11 +33,14 @@ runs:
         mkdir -p "$directory"
         gh release download v1.15.1 --repo SocketDev/sfw-free --pattern "$asset" --dir "$directory"
         if [[ "$RUNNER_OS" == macOS ]]; then
-          actual=$(shasum -a 256 "$directory/$asset")
+          actual=$(shasum -a 256 < "$directory/$asset")
         else
-          actual=$(sha256sum "$directory/$asset")
+          actual=$(sha256sum < "$directory/$asset")
         fi
-        test "${actual%% *}" = "$digest"
+        if [[ "${actual%% *}" != "$digest" ]]; then
+          echo "SHA-256 mismatch for $asset" >&2
+          exit 1
+        fi
         executable=sfw
         if [[ "$RUNNER_OS" == Windows ]]; then executable=sfw.exe; fi
         mv "$directory/$asset" "$directory/$executable"

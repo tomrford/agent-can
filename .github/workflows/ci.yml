@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, ubuntu-24.04-arm, macos-15, macos-15-intel, windows-2022]
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-26-intel, windows-latest]
     defaults:
       run:
         shell: bash
@@ -58,7 +58,7 @@ jobs:
           name: wheel-${{ matrix.os }}
           path: dist/*.whl
       - uses: actions/upload-artifact@v4
-        if: matrix.os == 'ubuntu-22.04'
+        if: matrix.os == 'ubuntu-latest'
         with:
           name: sdist
           path: dist/*.tar.gz
