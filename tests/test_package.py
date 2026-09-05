@@ -89,15 +89,15 @@ def test_stdio_capabilities_and_session_lifecycle(client):
     tools = client.rpc("tools/list", {})["tools"]
     assert {tool["name"] for tool in tools} == {
         "buses_list", "connect", "disconnect", "status", "schema", "message_list",
-        "message_read", "message_send", "message_stop", "trace_start", "trace_stop",
+        "message_read", "frame_send", "message_send", "message_stop", "trace_start", "trace_stop",
     }
     assert all(tool["inputSchema"]["type"] == "object" for tool in tools)
     buses = client.tool("buses_list", {})["buses"]
     virtual = next(bus for bus in buses if bus["interface"] == "virtual")
-    request = {"interface": "virtual", "channel": virtual["channel"]}
+    request = {"channel": virtual["channel"]}
     assert client.tool("connect", request)["created"]
     assert client.tool("connect", request)["already_connected"]
-    client.tool("message_send", {"target": "0x123", "data": "AABB", "periodicity_ms": 5})
+    client.tool("frame_send", {"target": "0x123", "data": "AABB", "periodicity_ms": 5})
     assert client.tool("status", {})["periodic_schedules"][0]["state"] == "active"
     observation = client.tool("message_read", {"select": "0x123", "direction": "tx"})["observations"][0]
     assert observation["payload_hex"] == "AABB"
@@ -112,9 +112,9 @@ def test_eof_finalises_recording_and_periodic_sends(tmp_path):
     client = Client()
     trace = tmp_path / "final.asc"
     try:
-        client.tool("connect", {"interface": "virtual", "channel": "virtual:agent-can"})
+        client.tool("connect", {"channel": "virtual:agent-can"})
         client.tool("trace_start", {"path": str(trace)})
-        client.tool("message_send", {"target": "0x321", "data": "DEADBEEF", "periodicity_ms": 2})
+        client.tool("frame_send", {"target": "0x321", "data": "DEADBEEF", "periodicity_ms": 2})
     finally:
         client.close()
     text = trace.read_text()
@@ -135,11 +135,11 @@ BO_ 513 Floating: 4 ECU
 SIG_VALTYPE_ 513 value : 1;
 ''')
     client.tool("connect", {
-        "interface": "virtual", "channel": "virtual:agent-can",
+        "channel": "virtual:agent-can",
         "dbcs": [{"alias": "test", "path": str(dbc)}],
     })
     for value in (9007199254740993, 18446744073709551615):
-        sent = client.tool("message_send", {"target": "test.Integer", "data": {"value": value}})
+        sent = client.tool("message_send", {"target": "test.Integer", "signals": {"value": value}})
         assert sent["payload_hex"] == value.to_bytes(8, "little").hex().upper()
         read = client.tool("message_read", {"select": "test.Integer", "direction": "tx"})
         assert read["observations"][0]["signals"]["value"]["value"] == value
@@ -149,13 +149,13 @@ SIG_VALTYPE_ 513 value : 1;
     client.process.stdin.write(
         '{"jsonrpc":"2.0","id":' + str(client.sequence)
         + ',"method":"tools/call","params":{"name":"message_send",'
-        '"arguments":{"target":"test.Integer","data":{"value":9007199254740993.0}}}}\n'
+        '"arguments":{"target":"test.Integer","signals":{"value":9007199254740993.0}}}}\n'
     )
     client.process.stdin.flush()
     response = client.messages.get(timeout=10)
     assert response["id"] == client.sequence
     assert response["result"]["isError"]
-    client.tool("message_send", {"target": "0x201", "data": "0000C07F"})
+    client.tool("frame_send", {"target": "0x201", "data": "0000C07F"})
     read = client.tool("message_read", {"select": "test.Floating", "direction": "tx"})
     observation = read["observations"][0]
     assert observation["payload_hex"] == "0000C07F"
@@ -166,9 +166,9 @@ def test_terminating_launcher_stops_child_with_stdin_open(tmp_path):
     client = Client()
     trace = tmp_path / "terminated.asc"
     try:
-        client.tool("connect", {"interface": "virtual", "channel": "virtual:agent-can"})
+        client.tool("connect", {"channel": "virtual:agent-can"})
         client.tool("trace_start", {"path": str(trace)})
-        client.tool("message_send", {"target": "0x321", "data": "AA", "periodicity_ms": 2})
+        client.tool("frame_send", {"target": "0x321", "data": "AA", "periodicity_ms": 2})
         client.process.terminate()
         client.process.wait(timeout=10)
         # stdout is inherited by Go on Windows; EOF proves that child stopped
@@ -184,14 +184,14 @@ def test_terminating_launcher_stops_child_with_stdin_open(tmp_path):
 
 
 def test_trace_format_and_generated_path(client):
-    client.tool("connect", {"interface": "virtual", "channel": "virtual:agent-can"})
+    client.tool("connect", {"channel": "virtual:agent-can"})
     client.tool("trace_start", {"format": "blf"}, error=True)
     trace = client.tool("trace_start", {"format": "asc"})
     path = Path(trace["path"])
     try:
         assert path.is_absolute() and path.suffix == ".asc"
         assert trace["format"] == "asc"
-        client.tool("message_send", {"target": "0x100", "data": "01"})
+        client.tool("frame_send", {"target": "0x100", "data": "01"})
         assert client.tool("trace_stop", {})["state"] == "stopped"
         saved = path.read_bytes()
         client.tool("trace_start", {"path": str(path)}, error=True)

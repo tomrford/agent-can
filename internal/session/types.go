@@ -10,11 +10,10 @@ type DBCSpec struct {
 }
 
 type ConnectRequest struct {
-	Interface string    `json:"interface" jsonschema:"Driver returned by buses_list, or virtual"`
-	Channel   string    `json:"channel" jsonschema:"Exact channel identifier returned by buses_list"`
-	Bitrate   uint32    `json:"bitrate,omitempty" jsonschema:"Classical CAN bitrate for programmable hardware; omit for SocketCAN and virtual"`
-	FDTiming  *FDTiming `json:"fd_timing,omitempty" jsonschema:"Exact CAN FD timing for programmable hardware; omit for SocketCAN and virtual"`
-	DBCs      []DBCSpec `json:"dbcs,omitempty" jsonschema:"Immutable connect-time DBC overlays; disconnect to change them"`
+	Channel  string    `json:"channel" jsonschema:"Exact channel identifier returned by buses_list"`
+	Bitrate  uint32    `json:"bitrate,omitempty" jsonschema:"Classical CAN bitrate for programmable hardware; omit for SocketCAN and virtual"`
+	FDTiming *FDTiming `json:"fd_timing,omitempty" jsonschema:"Exact CAN FD timing for programmable hardware; omit for SocketCAN and virtual"`
+	DBCs     []DBCSpec `json:"dbcs,omitempty" jsonschema:"Immutable connect-time DBC overlays; disconnect to change them"`
 }
 
 type BitTiming struct {
@@ -39,8 +38,7 @@ type SchemaRequest struct {
 	Filter string `json:"filter,omitempty"`
 }
 type ListRequest struct {
-	Filter   string `json:"filter,omitempty"`
-	AllowRaw bool   `json:"allow_raw,omitempty"`
+	Filter string `json:"filter,omitempty"`
 }
 type ReadRequest struct {
 	Select    string `json:"select" jsonschema:"Raw hex arbitration ID or exact alias.Message name"`
@@ -48,13 +46,18 @@ type ReadRequest struct {
 	Count     *int   `json:"count,omitempty" jsonschema:"Newest observations to return, from 1 to 4096; default 1"`
 	Direction string `json:"direction,omitempty" jsonschema:"rx (default) or tx; accepted sends are separate from received traffic"`
 }
-type SendRequest struct {
-	Target        string `json:"target" jsonschema:"Raw hex arbitration ID or exact alias.Message name"`
-	Data          any    `json:"data" jsonschema:"Hex string for raw frames; object with every active signal for semantic frames"`
+type FrameSendRequest struct {
+	Target        string `json:"target" jsonschema:"Raw hex arbitration ID"`
+	Data          string `json:"data" jsonschema:"Hex payload"`
 	Extended      bool   `json:"extended,omitempty"`
 	FD            bool   `json:"fd,omitempty"`
 	BitRateSwitch bool   `json:"bitrate_switch,omitempty"`
 	PeriodicityMS *int   `json:"periodicity_ms,omitempty" jsonschema:"Omit for one send; otherwise 1 through 86400000 milliseconds"`
+}
+type SendRequest struct {
+	Target        string         `json:"target" jsonschema:"Exact alias.Message name"`
+	Signals       map[string]any `json:"signals" jsonschema:"Every active signal, as numeric values or choice labels"`
+	PeriodicityMS *int           `json:"periodicity_ms,omitempty" jsonschema:"Omit for one send; otherwise 1 through 86400000 milliseconds"`
 }
 type StopRequest struct {
 	Target   string `json:"target"`

@@ -176,7 +176,7 @@ func (e *engine) status() Result {
 	sort.Slice(schedules, func(i, j int) bool {
 		return fmt.Sprint(schedules[i]["target"], schedules[i]["extended"]) < fmt.Sprint(schedules[j]["target"], schedules[j]["extended"])
 	})
-	result := Result{"connection_state": state, "interface": e.request.Interface, "channel": e.request.Channel,
+	result := Result{"connection_state": state, "channel": e.request.Channel,
 		"bitrate": e.request.Bitrate, "fd_timing": e.request.FDTiming, "dbcs": e.registry.specs,
 		"dbc_diagnostics": e.registry.diagnostics, "periodic_schedules": schedules, "backend_error": backendError,
 		"retention_window_secs": int(retention.Seconds()), "retained_records": e.capture.Len(),
@@ -239,29 +239,27 @@ func (m *Manager) List(_ context.Context, request ListRequest) (Result, error) {
 		if key.Direction != gocan.DirectionReceive {
 			continue
 		}
-		found := false
+		names := []string{}
+		matched := matches(request.Filter, key.ID)
 		for _, def := range e.registry.messages {
 			if !def.matches(observed.event.Frame) {
 				continue
 			}
-			found = true
-			if matches(request.Filter, key.ID, def.name, def.alias, def.message.Name) {
-				rows = append(rows, inventoryRow(observed, def.name, "semantic"))
-			}
+			names = append(names, def.name)
+			matched = matched || matches(request.Filter, key.ID, def.name, def.alias, def.message.Name)
 		}
-		if !found && (len(e.registry.messages) == 0 || request.AllowRaw) && matches(request.Filter, key.ID) {
-			rows = append(rows, inventoryRow(observed, fmt.Sprintf("0x%X", key.ID), "raw"))
+		if matched {
+			row := frameResult(observed.event.Frame)
+			delete(row, "payload_hex")
+			row["names"], row["observed_count"], row["cycle_time_ms"] = names, observed.count, observed.cycleMS
+			rows = append(rows, row)
 		}
 	}
 	sort.Slice(rows, func(i, j int) bool {
-		return fmt.Sprint(rows[i]["label"], rows[i]["extended"]) < fmt.Sprint(rows[j]["label"], rows[j]["extended"])
+		if rows[i]["arb_id"] != rows[j]["arb_id"] {
+			return rows[i]["arb_id"].(uint32) < rows[j]["arb_id"].(uint32)
+		}
+		return !rows[i]["extended"].(bool) && rows[j]["extended"].(bool)
 	})
 	return Result{"messages": rows}, nil
-}
-
-func inventoryRow(observed observation, label, kind string) Result {
-	row := frameResult(observed.event.Frame)
-	delete(row, "payload_hex")
-	row["label"], row["kind"], row["observed_count"], row["cycle_time_ms"], row["has_rx"] = label, kind, observed.count, observed.cycleMS, true
-	return row
 }

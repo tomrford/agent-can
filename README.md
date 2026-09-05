@@ -25,12 +25,13 @@ the packaged version. There is currently no web UI or persistent daemon.
 
 ## Connect
 
-Call `buses_list`, then pass its exact `interface` and `channel` values to `connect`.
+Call `buses_list`, then pass its exact `channel` value to `connect`.
+The channel also identifies its driver.
 Discovery reports available channels even if another vendor's discovery fails.
 The virtual channel is an in-process loopback for development:
 
 ```json
-{"interface": "virtual", "channel": "virtual:agent-can"}
+{"channel": "virtual:agent-can"}
 ```
 
 SocketCAN uses timing already configured by Linux; omit timing fields. PCAN and
@@ -39,7 +40,6 @@ takes exact `fd_timing` instead:
 
 ```json
 {
-  "interface": "pcan",
   "channel": "pcan:0x51",
   "fd_timing": {
     "clock_hz": 80000000,
@@ -69,14 +69,16 @@ remains the source of truth.
 | `connect`, `disconnect` | Open or close the process-owned session |
 | `status` | Connection, DBCs, schedule health, trace state and retention |
 | `schema` | DBC messages and signals; optional partial, glob or raw-ID filter |
-| `message_list` | Received-traffic inventory; `allow_raw` includes unmatched frames when DBCs are loaded |
+| `message_list` | Received-traffic inventory; one row per raw identity with matching DBC `names` |
 | `message_read` | Latest observations for one raw ID or exact semantic name |
-| `message_send`, `message_stop` | One-shot or periodic transmission and schedule cancellation |
+| `frame_send` | Send a raw hex payload once or periodically |
+| `message_send` | Send a complete DBC signal map once or periodically |
+| `message_stop` | Cancel a periodic raw or semantic transmission |
 | `trace_start`, `trace_stop` | ASC recording with final flush and explicit error reporting |
 
 ## Read and send
 
-Raw sends take a hex payload. Standard classical CAN is the default:
+`frame_send` takes a raw hex payload. Standard classical CAN is the default:
 
 ```json
 {"target": "0x123", "data": "01020304"}
@@ -86,17 +88,18 @@ Raw sends take a hex payload. Standard classical CAN is the default:
 must be 0–8, 12, 16, 20, 24, 32, 48 or 64 bytes; payloads are never padded silently.
 `len` is the byte length; `dlc` is the wire length code.
 
-Semantic sends take an exact `alias.Message` and every active signal:
+`message_send` takes an exact `alias.Message` and every active signal:
 
 ```json
 {
   "target": "vehicle.PowertrainStatus",
-  "data": {"vehicle_speed": 12.3, "engine_rpm": 1200, "throttle": 20, "coolant_temp": 82}
+  "signals": {"vehicle_speed": 12.3, "engine_rpm": 1200, "throttle": 20, "coolant_temp": 82}
 }
 ```
 
-Choice labels are accepted as signal values. Missing, unknown and inactive signal
-inputs fail before sending. Large integer inputs retain all 64 bits; use integer
+Semantic frame flags come from the DBC. Choice labels are accepted as signal values.
+Missing, unknown and inactive signal inputs fail before sending. Large integer
+inputs retain all 64 bits; use integer
 notation for values at or above 2^53 rather than decimal or exponent notation.
 
 Add `periodicity_ms` (1 through 86400000) for recurring sends. Each target has one
@@ -114,6 +117,12 @@ standard CAN by default; use `extended: true` for 29-bit frames. Semantic names
 determine their own frame format. Semantic observations contain a signal-name map of values and units;
 enumerations decode to their choice label. `signal_errors` reports inactive,
 malformed or non-finite signals while retaining the raw frame and other signals.
+
+Inventory always includes unmatched raw traffic. Each row identifies an arbitration
+ID and standard/extended format, with all matching DBC names in `names` (empty for
+unmatched traffic). Filters select rows by raw ID or DBC name without dropping the
+row's other names. `schema` separately lists the DBC catalog, including unseen
+messages.
 
 Reads and inventory cover the last 60 seconds. Capture storage is pruned in whole
 gocan chunks, so allocated/retained storage can exceed that logical window. A

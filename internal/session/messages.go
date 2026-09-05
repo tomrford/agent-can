@@ -115,6 +115,40 @@ func scheduleKey(target string, extended bool) (string, error) {
 	return strings.TrimSpace(target), nil
 }
 
+func (m *Manager) SendFrame(ctx context.Context, request FrameSendRequest) (Result, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.engine == nil {
+		return nil, errors.New("no active session; connect first")
+	}
+	id, raw, err := rawID(request.Target)
+	if err != nil {
+		return nil, err
+	}
+	if !raw {
+		return nil, errors.New("target must be a raw hex arbitration ID; use message_send for DBC messages")
+	}
+	payload, err := hex.DecodeString(strings.Join(strings.Fields(request.Data), ""))
+	if err != nil {
+		return nil, fmt.Errorf("invalid raw hex payload: %w", err)
+	}
+	var flags gocan.FrameFlags
+	if request.Extended {
+		flags |= gocan.FrameExtended
+	}
+	if request.FD {
+		flags |= gocan.FrameFD
+	}
+	if request.BitRateSwitch {
+		flags |= gocan.FrameBitRateSwitch
+	}
+	frame, err := gocan.NewFrame(id, payload, flags)
+	if err != nil {
+		return nil, err
+	}
+	return m.engine.send(ctx, request.Target, request.Extended, frame, request.PeriodicityMS)
+}
+
 func (m *Manager) Send(ctx context.Context, request SendRequest) (Result, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -122,71 +156,39 @@ func (m *Manager) Send(ctx context.Context, request SendRequest) (Result, error)
 	if e == nil {
 		return nil, errors.New("no active session; connect first")
 	}
-	if request.PeriodicityMS != nil && (*request.PeriodicityMS < 1 || *request.PeriodicityMS > 86400000) {
-		return nil, errors.New("periodicity_ms must be between 1 and 86400000")
-	}
-	key, err := scheduleKey(request.Target, request.Extended)
+	def, err := e.registry.resolve(request.Target)
 	if err != nil {
 		return nil, err
 	}
-	id, raw, err := rawID(request.Target)
-	if err != nil {
-		return nil, err
-	}
-	var frame gocan.Frame
-	if raw {
-		data, ok := request.Data.(string)
-		if !ok {
-			return nil, errors.New("raw target requires a hex string payload")
-		}
-		payload, err := hex.DecodeString(strings.Join(strings.Fields(data), ""))
-		if err != nil {
-			return nil, fmt.Errorf("invalid raw hex payload: %w", err)
-		}
-		var flags gocan.FrameFlags
-		if request.Extended {
-			flags |= gocan.FrameExtended
-		}
-		if request.FD {
-			flags |= gocan.FrameFD
-		}
-		if request.BitRateSwitch {
-			flags |= gocan.FrameBitRateSwitch
-		}
-		frame, err = gocan.NewFrame(id, payload, flags)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		if request.FD || request.BitRateSwitch {
-			return nil, errors.New("frame flags are only valid for raw targets")
-		}
-		values, ok := request.Data.(map[string]any)
-		if !ok {
-			return nil, errors.New("semantic target requires a signal map")
-		}
-		for name, value := range values {
-			if number, ok := value.(json.Number); ok {
-				converted, err := signalNumber(number)
-				if err != nil {
-					return nil, fmt.Errorf("signal %q: %w", name, err)
-				}
-				values[name] = converted
+	values := make(dbc.Values, len(request.Signals))
+	for name, value := range request.Signals {
+		if number, ok := value.(json.Number); ok {
+			value, err = signalNumber(number)
+			if err != nil {
+				return nil, fmt.Errorf("signal %q: %w", name, err)
 			}
 		}
-		def, err := e.registry.resolve(request.Target)
-		if err != nil {
-			return nil, err
-		}
-		frame, err = def.message.Encode(dbc.Values(values))
-		if err != nil {
-			return nil, err
-		}
+		values[name] = value
+	}
+	frame, err := def.message.Encode(values)
+	if err != nil {
+		return nil, err
+	}
+	return e.send(ctx, def.name, false, frame, request.PeriodicityMS)
+}
+
+func (e *engine) send(ctx context.Context, target string, extended bool, frame gocan.Frame, period *int) (Result, error) {
+	if period != nil && (*period < 1 || *period > 86400000) {
+		return nil, errors.New("periodicity_ms must be between 1 and 86400000")
+	}
+	key, err := scheduleKey(target, extended)
+	if err != nil {
+		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if request.PeriodicityMS == nil {
+	if period == nil {
 		sendCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 		if err := e.bus.Send(sendCtx, frame); err != nil {
@@ -194,17 +196,17 @@ func (m *Manager) Send(ctx context.Context, request SendRequest) (Result, error)
 		}
 	} else {
 		// The schedule belongs to the session, not the initiating MCP request.
-		task, err := cyclic.Start(e.ctx, e.bus, frame, time.Duration(*request.PeriodicityMS)*time.Millisecond)
+		task, err := cyclic.Start(e.ctx, e.bus, frame, time.Duration(*period)*time.Millisecond)
 		if err != nil {
 			return nil, err
 		}
 		if existing := e.schedules[key]; existing != nil {
 			existing.task.Stop()
 		}
-		e.schedules[key] = &schedule{target: strings.TrimSpace(request.Target), frame: frame, period: *request.PeriodicityMS, task: task}
+		e.schedules[key] = &schedule{target: strings.TrimSpace(target), frame: frame, period: *period, task: task}
 	}
 	result := frameResult(frame)
-	result["target"], result["periodicity_ms"] = strings.TrimSpace(request.Target), request.PeriodicityMS
+	result["target"], result["periodicity_ms"] = strings.TrimSpace(target), period
 	return result, nil
 }
 

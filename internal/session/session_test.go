@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -21,7 +22,7 @@ func connected(t *testing.T, withDBC bool) *Manager {
 			t.Error(err)
 		}
 	})
-	r := ConnectRequest{Interface: "virtual", Channel: "virtual:agent-can"}
+	r := ConnectRequest{Channel: "virtual:agent-can"}
 	if withDBC {
 		p, err := filepath.Abs("../../examples/demo.dbc")
 		if err != nil {
@@ -50,7 +51,7 @@ func eventually(t *testing.T, check func() bool) {
 func TestSemanticSendAndReadAgainstKnownPayload(t *testing.T) {
 	m := connected(t, true)
 	ctx := context.Background()
-	result, err := m.Send(ctx, SendRequest{Target: "demo.PowertrainStatus", Data: map[string]any{
+	result, err := m.Send(ctx, SendRequest{Target: "demo.PowertrainStatus", Signals: map[string]any{
 		"vehicle_speed": 12.3, "engine_rpm": 1500, "throttle": 20, "coolant_temp": 90,
 	}})
 	if err != nil {
@@ -75,7 +76,7 @@ func TestSemanticSendAndReadAgainstKnownPayload(t *testing.T) {
 			t.Fatal(err)
 		}
 		rows := list["messages"].([]Result)
-		if len(rows) != 1 || rows[0]["label"] != "demo.PowertrainStatus" {
+		if len(rows) != 1 || len(rows[0]["names"].([]string)) != 1 || rows[0]["names"].([]string)[0] != "demo.PowertrainStatus" {
 			t.Fatalf("filter %q: %v", filter, rows)
 		}
 	}
@@ -88,7 +89,7 @@ func TestRejectInvalidSendsBeforeTransmission(t *testing.T) {
 	m := connected(t, true)
 	ctx := context.Background()
 	zero := 0
-	requests := []SendRequest{
+	requests := []FrameSendRequest{
 		{Target: "0x800", Data: "00"},
 		{Target: "0x20000000", Data: "00", Extended: true},
 		{Target: "0x123", Data: strings.Repeat("AA", 9)},
@@ -96,13 +97,21 @@ func TestRejectInvalidSendsBeforeTransmission(t *testing.T) {
 		{Target: "0x123", Data: "F"},
 		{Target: "0x123", Data: "00", BitRateSwitch: true},
 		{Target: "0x123", Data: "00", PeriodicityMS: &zero},
-		{Target: "demo.PowertrainStatus", Data: map[string]any{"engine_rpm": 1500}},
-		{Target: "demo.Heartbeat", Data: map[string]any{"counter": 1, "mode": 1, "surprise": 0}},
-		{Target: "demo.Heartbeat", Data: map[string]any{"counter": 1, "mode": 1}, FD: true},
+		{Target: "demo.Heartbeat", Data: "00"},
 	}
 	for _, request := range requests {
-		if _, err := m.Send(ctx, request); err == nil {
+		if _, err := m.SendFrame(ctx, request); err == nil {
 			t.Errorf("accepted invalid send: %+v", request)
+		}
+	}
+	for _, request := range []SendRequest{
+		{Target: "0x123", Signals: map[string]any{}},
+		{Target: "demo.PowertrainStatus", Signals: map[string]any{"engine_rpm": 1500}},
+		{Target: "demo.Heartbeat", Signals: map[string]any{"counter": 1, "mode": 1, "surprise": 0}},
+		{Target: "demo.Heartbeat", Signals: map[string]any{"counter": 1, "mode": 1}, PeriodicityMS: &zero},
+	} {
+		if _, err := m.Send(ctx, request); err == nil {
+			t.Errorf("accepted invalid semantic send: %+v", request)
 		}
 	}
 	if m.engine.capture.Len() != 0 {
@@ -115,13 +124,60 @@ func TestRejectInvalidSendsBeforeTransmission(t *testing.T) {
 	}
 }
 
+func TestInventoryKeepsRawIdentitiesWithAllDBCNames(t *testing.T) {
+	m := connected(t, true)
+	ctx := context.Background()
+	path := m.engine.registry.specs[0].Path
+	if err := m.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Connect(ctx, ConnectRequest{Channel: "virtual:agent-can", DBCs: []DBCSpec{
+		{Alias: "demo", Path: path}, {Alias: "other", Path: path},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range []gocan.FrameEvent{
+		{Frame: gocan.Frame{ID: 0x120}, Direction: gocan.DirectionReceive},
+		{Frame: gocan.Frame{ID: 0x120, Flags: gocan.FrameExtended}, Direction: gocan.DirectionReceive},
+		{Frame: gocan.Frame{ID: 0x123}, Direction: gocan.DirectionReceive},
+		{Frame: gocan.Frame{ID: 0x456}, Direction: gocan.DirectionTransmit},
+	} {
+		event.Bus, event.Timestamp = 1, time.Now()
+		if err := m.engine.capture.Append(event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	list, err := m.List(ctx, ListRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := list["messages"].([]Result)
+	if len(rows) != 3 || rows[0]["arb_id"] != uint32(0x120) || rows[0]["extended"] != false ||
+		rows[1]["arb_id"] != uint32(0x120) || rows[1]["extended"] != true || rows[2]["arb_id"] != uint32(0x123) {
+		t.Fatalf("raw identities lost, duplicated or mixed with TX: %v", rows)
+	}
+	wantNames := []string{"demo.PowertrainStatus", "other.PowertrainStatus"}
+	if !slices.Equal(rows[0]["names"].([]string), wantNames) || len(rows[1]["names"].([]string)) != 0 || len(rows[2]["names"].([]string)) != 0 {
+		t.Fatalf("incorrect DBC overlays: %v", rows)
+	}
+	for filter, count := range map[string]int{"other.Power*": 1, "0x120": 2, "0x123": 1, "Heartbeat": 0} {
+		list, err := m.List(ctx, ListRequest{Filter: filter})
+		if err != nil || len(list["messages"].([]Result)) != count {
+			t.Fatalf("filter %q: %v %v", filter, list, err)
+		}
+		if filter == "other.Power*" && !slices.Equal(list["messages"].([]Result)[0]["names"].([]string), wantNames) {
+			t.Fatalf("filter discarded matching identity's other names: %v", list)
+		}
+	}
+}
+
 func TestFDIdentityAndRXTXSeparation(t *testing.T) {
 	m := connected(t, false)
 	ctx := context.Background()
-	if _, err := m.Send(ctx, SendRequest{Target: "0x123", Data: "AA"}); err != nil {
+	if _, err := m.SendFrame(ctx, FrameSendRequest{Target: "0x123", Data: "AA"}); err != nil {
 		t.Fatal(err)
 	}
-	result, err := m.Send(ctx, SendRequest{Target: "0x123", Data: strings.Repeat("BB", 12), Extended: true, FD: true, BitRateSwitch: true})
+	result, err := m.SendFrame(ctx, FrameSendRequest{Target: "0x123", Data: strings.Repeat("BB", 12), Extended: true, FD: true, BitRateSwitch: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,13 +231,13 @@ func TestSessionOwnedSchedulesAndCanonicalStop(t *testing.T) {
 	m := connected(t, false)
 	ctx, cancel := context.WithCancel(context.Background())
 	period := 5
-	if _, err := m.Send(ctx, SendRequest{Target: "0x0123", Data: "01", PeriodicityMS: &period}); err != nil {
+	if _, err := m.SendFrame(ctx, FrameSendRequest{Target: "0x0123", Data: "01", PeriodicityMS: &period}); err != nil {
 		t.Fatal(err)
 	}
 	cancel()
 	key := gocan.FrameKey{ID: 0x123, Bus: 1, Direction: gocan.DirectionTransmit}
 	eventually(t, func() bool { return len(m.engine.capture.Series(key)) >= 3 })
-	if _, err := m.Send(context.Background(), SendRequest{Target: "0X123", Data: "02", PeriodicityMS: &period}); err != nil {
+	if _, err := m.SendFrame(context.Background(), FrameSendRequest{Target: "0X123", Data: "02", PeriodicityMS: &period}); err != nil {
 		t.Fatal(err)
 	}
 	status, _ := m.Status(context.Background(), Empty{})
@@ -202,7 +258,7 @@ func TestSessionOwnedSchedulesAndCanonicalStop(t *testing.T) {
 func TestFailedScheduleRemainsObservable(t *testing.T) {
 	m := connected(t, false)
 	period := 5
-	if _, err := m.Send(context.Background(), SendRequest{Target: "0x123", Data: "01", PeriodicityMS: &period}); err != nil {
+	if _, err := m.SendFrame(context.Background(), FrameSendRequest{Target: "0x123", Data: "01", PeriodicityMS: &period}); err != nil {
 		t.Fatal(err)
 	}
 	if err := m.engine.bus.Close(); err != nil {
@@ -236,14 +292,14 @@ func TestFailedReplacementPreservesWorkingSchedule(t *testing.T) {
 		}
 	})
 	ctx := context.Background()
-	if _, err := m.Connect(ctx, ConnectRequest{Interface: "virtual", Channel: "virtual:agent-can"}); err != nil {
+	if _, err := m.Connect(ctx, ConnectRequest{Channel: "virtual:agent-can"}); err != nil {
 		t.Fatal(err)
 	}
 	period := 5
-	if _, err := m.Send(ctx, SendRequest{Target: "0x123", Data: "AA", PeriodicityMS: &period}); err != nil {
+	if _, err := m.SendFrame(ctx, FrameSendRequest{Target: "0x123", Data: "AA", PeriodicityMS: &period}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.Send(ctx, SendRequest{Target: "0x123", Data: strings.Repeat("BB", 12), FD: true, PeriodicityMS: &period}); err == nil {
+	if _, err := m.SendFrame(ctx, FrameSendRequest{Target: "0x123", Data: strings.Repeat("BB", 12), FD: true, PeriodicityMS: &period}); err == nil {
 		t.Fatal("FD send accepted")
 	}
 	key := gocan.FrameKey{ID: 0x123, Bus: 1, Direction: gocan.DirectionTransmit}
@@ -263,7 +319,7 @@ func TestTraceShutdownAndNoOverwrite(t *testing.T) {
 	if _, err := m.TraceStart(ctx, TraceRequest{Path: path}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.Send(ctx, SendRequest{Target: "0x321", Data: "DEADBEEF"}); err != nil {
+	if _, err := m.SendFrame(ctx, FrameSendRequest{Target: "0x321", Data: "DEADBEEF"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := m.TraceStart(ctx, TraceRequest{Path: filepath.Join(t.TempDir(), "other.asc")}); err == nil {

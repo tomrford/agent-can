@@ -24,10 +24,7 @@ func Buses(context.Context, Empty) (Result, error) {
 }
 
 func openBus(ctx context.Context, capture *gocan.Capture, request ConnectRequest) (gocan.Bus, error) {
-	if request.Interface == "virtual" {
-		if request.Channel != "virtual:agent-can" {
-			return nil, fmt.Errorf("use virtual:agent-can from buses_list")
-		}
+	if request.Channel == "virtual:agent-can" {
 		if request.Bitrate != 0 || request.FDTiming != nil {
 			return nil, fmt.Errorf("virtual CAN needs no bit timing")
 		}
@@ -35,7 +32,7 @@ func openBus(ctx context.Context, capture *gocan.Capture, request ConnectRequest
 	}
 	channels, err := drivers.Discover()
 	for _, channel := range channels {
-		if channel.Identifier() != request.Channel || channel.Driver() != request.Interface {
+		if channel.Identifier() != request.Channel {
 			continue
 		}
 		config := drivers.Config{ID: 1, Name: channel.Name(), Bitrate: request.Bitrate, External: channel.ExternallyConfigured()}
@@ -47,5 +44,5 @@ func openBus(ctx context.Context, capture *gocan.Capture, request ConnectRequest
 	if err != nil {
 		return nil, fmt.Errorf("CAN channel %q not found; discovery reported: %w", request.Channel, err)
 	}
-	return nil, fmt.Errorf("CAN channel %q not found for %q; use buses_list", request.Channel, request.Interface)
+	return nil, fmt.Errorf("CAN channel %q not found; use buses_list", request.Channel)
 }
