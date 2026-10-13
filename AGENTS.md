@@ -24,10 +24,6 @@ Before handoff, run the full gate above unless the task is explicitly read-only 
 
 ## Release
 
-CI runs Ruff, pytest, and package build checks on pull requests and pushes. PyPI publishing uses GitHub trusted publishing from published GitHub releases:
-
-```sh
-gh release create v0.1.0 --target main --title v0.1.0 --generate-notes
-```
+CI runs Ruff, pytest, and package build checks on pull requests and pushes. PyPI publishing uses GitHub trusted publishing from published GitHub releases.
 
 Keep `pyproject.toml`, `src/agent_can/__init__.py`, and the tag version aligned.
